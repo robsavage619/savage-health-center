@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+:root {
+  /* SHC color tokens */
+  --recovery-green:  oklch(0.72 0.18 145);
+  --recovery-amber:  oklch(0.75 0.18 75);
+  --recovery-red:    oklch(0.65 0.22 25);
+  --chart-baseline:  oklch(0.5 0.05 250);
+  --chart-grid:      oklch(1 0 0 / 0.06);
+  --chart-line:      oklch(0.72 0.12 250);
+
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.96 0 0);
+
+  --card:        oklch(0.18 0 0);
+  --card-border: oklch(1 0 0 / 0.06);
+
+  --muted:           oklch(0.22 0 0);
+  --muted-foreground: oklch(0.55 0 0);
+}
+
+* { box-sizing: border-box; }
+
+html {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans, system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: oklch(0.72 0.12 250 / 0.25);
+}
+
+/* Tabular numbers on anything explicitly classed */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "ss01", "cv11", "tnum";
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: oklch(0.3 0 0); border-radius: 3px; }
