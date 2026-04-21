@@ -242,7 +242,7 @@ SELECT
     r.hrv,
     r.rhr,
     s.stages_json,
-    (ts_out - ts_in) / 60 AS sleep_hours,
+    epoch(ts_out - ts_in) / 3600.0 AS sleep_hours,
     dc.energy_1_10,
     dc.stress_1_10,
     dc.joint_pain_by_region_json
