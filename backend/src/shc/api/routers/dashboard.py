@@ -1168,6 +1168,9 @@ EXERCISES TO AVOID/SUBSTITUTE:
             return _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today)
 
         plan = json.loads(call.function.arguments)
+        if not isinstance(plan.get("blocks"), list):
+            log.warning("workout_next: model returned plan without blocks, falling back")
+            return _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today)
         await _log_llm_call(request_id=request_id, model=model, route_reason="workout_next", usage=response.usage)
         result = {"generated_at": today, "source": "claude", **plan}
         _WORKOUT_CACHE[today] = result
