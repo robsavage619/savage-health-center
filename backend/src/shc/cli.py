@@ -72,6 +72,21 @@ async def _seed(days: int) -> None:
             )
 
 
+@main.command("ingest-fitbod")
+@click.option("--csv", "csv_path", default=None, help="Path to WorkoutExport.csv (auto-detected if omitted)")
+def ingest_fitbod(csv_path: str | None) -> None:
+    """Ingest Fitbod WorkoutExport.csv into workouts + workout_sets + working_weights."""
+    from pathlib import Path
+    from shc.ingest.fitbod import ingest_fitbod as _ingest, _FITBOD_CSV
+
+    init_db()
+    path = Path(csv_path) if csv_path else _FITBOD_CSV
+    click.echo(f"Loading Fitbod data from {path} ...")
+    result = _ingest(path)
+    click.echo(f"Done: {result['workouts_inserted']} new sessions, {result['sets_inserted']} new sets "
+               f"({result['sessions']} total sessions in CSV, {result['skipped']} skipped)")
+
+
 @main.command()
 @click.confirmation_option(prompt="This will delete and recreate the database. Are you sure?")
 def reset() -> None:
