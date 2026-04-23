@@ -947,70 +947,75 @@ def _muscle_group(exercise: str) -> str:
 
 _WORKOUT_CACHE: dict[str, dict] = {}
 
-_WORKOUT_TOOL = {
-    "name": "emit_workout_plan",
-    "description": "Emit a structured workout plan for today.",
-    "input_schema": {
-        "type": "object",
-        "required": ["readiness_tier", "readiness_summary", "recommendation", "warmup", "blocks", "cooldown", "clinical_notes", "vault_insights"],
-        "properties": {
-            "readiness_tier": {"type": "string", "enum": ["green", "yellow", "red"]},
-            "readiness_summary": {"type": "string"},
-            "recommendation": {
+_PLAN_SCHEMA = {
+    "type": "object",
+    "required": ["readiness_tier", "readiness_summary", "recommendation", "warmup", "blocks", "cooldown", "clinical_notes", "vault_insights"],
+    "properties": {
+        "readiness_tier": {"type": "string", "enum": ["green", "yellow", "red"]},
+        "readiness_summary": {"type": "string"},
+        "recommendation": {
+            "type": "object",
+            "required": ["intensity", "focus", "rationale", "estimated_duration_min", "target_rpe"],
+            "properties": {
+                "intensity": {"type": "string", "enum": ["high", "moderate", "low", "rest"]},
+                "focus": {"type": "string"},
+                "rationale": {"type": "string"},
+                "estimated_duration_min": {"type": "integer"},
+                "target_rpe": {"type": "number"},
+            },
+        },
+        "warmup": {
+            "type": "array",
+            "items": {
                 "type": "object",
-                "required": ["intensity", "focus", "rationale", "estimated_duration_min", "target_rpe"],
+                "required": ["name"],
                 "properties": {
-                    "intensity": {"type": "string", "enum": ["high", "moderate", "low", "rest"]},
-                    "focus": {"type": "string"},
-                    "rationale": {"type": "string"},
-                    "estimated_duration_min": {"type": "integer"},
-                    "target_rpe": {"type": "number"},
+                    "name": {"type": "string"},
+                    "sets": {"type": "integer"},
+                    "reps": {"type": "integer"},
+                    "duration_sec": {"type": "integer"},
+                    "notes": {"type": "string"},
                 },
             },
-            "warmup": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["name"],
-                    "properties": {
-                        "name": {"type": "string"},
-                        "sets": {"type": "integer"},
-                        "reps": {"type": "integer"},
-                        "duration_sec": {"type": "integer"},
-                        "notes": {"type": "string"},
-                    },
-                },
-            },
-            "blocks": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["label", "exercises"],
-                    "properties": {
-                        "label": {"type": "string"},
-                        "exercises": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "required": ["name", "sets", "reps", "rpe_target"],
-                                "properties": {
-                                    "name": {"type": "string"},
-                                    "sets": {"type": "integer"},
-                                    "reps": {"type": "string"},
-                                    "weight_kg": {"type": "number"},
-                                    "weight_lbs": {"type": "number"},
-                                    "rpe_target": {"type": "number"},
-                                    "notes": {"type": "string"},
-                                },
+        },
+        "blocks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["label", "exercises"],
+                "properties": {
+                    "label": {"type": "string"},
+                    "exercises": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["name", "sets", "reps", "rpe_target"],
+                            "properties": {
+                                "name": {"type": "string"},
+                                "sets": {"type": "integer"},
+                                "reps": {"type": "string"},
+                                "weight_kg": {"type": "number"},
+                                "weight_lbs": {"type": "number"},
+                                "rpe_target": {"type": "number"},
+                                "notes": {"type": "string"},
                             },
                         },
                     },
                 },
             },
-            "cooldown": {"type": "string"},
-            "clinical_notes": {"type": "array", "items": {"type": "string"}},
-            "vault_insights": {"type": "array", "items": {"type": "string"}},
         },
+        "cooldown": {"type": "string"},
+        "clinical_notes": {"type": "array", "items": {"type": "string"}},
+        "vault_insights": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+_WORKOUT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "emit_workout_plan",
+        "description": "Emit a structured workout plan for today.",
+        "parameters": _PLAN_SCHEMA,
     },
 }
 
@@ -1138,32 +1143,32 @@ EXERCISES TO AVOID/SUBSTITUTE:
 {excl_lines}
 """
 
-    if not settings.anthropic_api_key:
-        return _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today)
+    from openai import OpenAI
 
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    model = settings.ollama_model
+    client = OpenAI(base_url=f"{settings.ollama_base_url}/v1", api_key="ollama")
     request_id = str(uuid.uuid4())
 
     try:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
+        response = client.chat.completions.create(
+            model=model,
             max_tokens=2048,
-            system=_SYSTEM_PROMPT,
             tools=[_WORKOUT_TOOL],
-            tool_choice={"type": "tool", "name": "emit_workout_plan"},
-            messages=[{"role": "user", "content": user_context}],
+            tool_choice={"type": "function", "function": {"name": "emit_workout_plan"}},
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_context},
+            ],
         )
-        plan = next(
-            (b.input for b in response.content if b.type == "tool_use" and b.name == "emit_workout_plan"),
-            None,
-        )
-        if plan is None:
+        tool_calls = response.choices[0].message.tool_calls or []
+        call = next((c for c in tool_calls if c.function.name == "emit_workout_plan"), None)
+        if call is None:
+            log.warning("workout_next: no tool_call in response")
             return _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today)
 
-        _log_llm_call(request_id=request_id, model="claude-sonnet-4-6", route_reason="workout_next", usage=response.usage)
-        result = {"generated_at": today, "source": "claude", **plan}
+        plan = json.loads(call.function.arguments)
+        _log_llm_call(request_id=request_id, model=model, route_reason="workout_next", usage=response.usage)
+        result = {"generated_at": today, "source": model, **plan}
         _WORKOUT_CACHE[today] = result
         return result
 
@@ -1174,10 +1179,13 @@ EXERCISES TO AVOID/SUBSTITUTE:
 
 def _log_llm_call(*, request_id: str, model: str, route_reason: str, usage) -> None:
     try:
+        # OpenAI usage: prompt_tokens / completion_tokens; Anthropic: input_tokens / output_tokens
+        input_tok = getattr(usage, "prompt_tokens", None) or getattr(usage, "input_tokens", None)
+        output_tok = getattr(usage, "completion_tokens", None) or getattr(usage, "output_tokens", None)
         conn = get_read_conn()
         conn.execute(
             "INSERT INTO llm_calls (ts, request_id, model, route_reason, input_tok, output_tok, cached_tok) VALUES (now(), ?, ?, ?, ?, ?, ?)",
-            [request_id, model, route_reason, getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None), getattr(usage, "cache_read_input_tokens", 0)],
+            [request_id, model, route_reason, input_tok, output_tok, 0],
         )
         conn.close()
     except Exception as exc:
