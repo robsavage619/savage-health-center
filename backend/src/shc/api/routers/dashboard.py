@@ -1040,7 +1040,22 @@ COACHING PRINCIPLES:
 • Train most rested group when in doubt
 • Compound movements, progressive overload, proper warm-up
 
-Generate today's plan with emit_workout_plan. Name actual exercises from Rob's history, prescribe exact weights from working weight data, use RPE appropriate to today's readiness tier. Make it feel like it came from a coach who knows every data point about Rob."""
+OUTPUT INSTRUCTIONS:
+Respond with ONLY valid JSON — no markdown, no explanation, no code fences.
+The JSON must have exactly these top-level keys:
+  readiness_tier (string: "green"|"yellow"|"red")
+  readiness_summary (string: 1–2 sentences on today's readiness)
+  recommendation (object with keys: intensity, focus, rationale, estimated_duration_min, target_rpe)
+  warmup (array of objects with keys: name, sets?, reps?, duration_sec?, notes?)
+  blocks (array of objects with keys: label, exercises — exercises has: name, sets, reps, weight_lbs?, rpe_target, notes?)
+  cooldown (string)
+  clinical_notes (array of strings)
+  vault_insights (array of strings)
+
+Example blocks structure:
+"blocks": [{"label": "PRIMARY — COMPOUND", "exercises": [{"name": "Barbell Squat", "sets": 4, "reps": "5", "weight_lbs": 225, "rpe_target": 8, "notes": ""}]}]
+
+Name actual exercises from Rob's history. Prescribe exact weights from working weight data. Make it feel like it came from a coach who knows every data point about Rob."""
 
 
 @router.get("/workout/next")
@@ -1154,23 +1169,25 @@ EXERCISES TO AVOID/SUBSTITUTE:
         response = await client.chat.completions.create(
             model=model,
             max_tokens=2048,
-            tools=[_WORKOUT_TOOL],
-            tool_choice={"type": "function", "function": {"name": "emit_workout_plan"}},
+            response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_context},
             ],
         )
-        tool_calls = response.choices[0].message.tool_calls or []
-        call = next((c for c in tool_calls if c.function.name == "emit_workout_plan"), None)
-        if call is None:
-            log.warning("workout_next: no tool_call in response")
+        content = (response.choices[0].message.content or "").strip()
+        if not content:
+            log.warning("workout_next: empty response from model")
             return _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today)
 
-        plan = json.loads(call.function.arguments)
-        if not isinstance(plan.get("blocks"), list):
+        plan = json.loads(content)
+        if not isinstance(plan.get("blocks"), list) or not plan["blocks"]:
             log.warning("workout_next: model returned plan without blocks, falling back")
             return _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today)
+        # Normalise blocks: ensure exercises is always a list
+        for block in plan["blocks"]:
+            if not isinstance(block.get("exercises"), list):
+                block["exercises"] = []
         await _log_llm_call(request_id=request_id, model=model, route_reason="workout_next", usage=response.usage)
         result = {"generated_at": today, "source": "claude", **plan}
         _WORKOUT_CACHE[today] = result

@@ -117,7 +117,7 @@ function ExerciseTable({ block }: { block: WorkoutBlock }) {
             </tr>
           </thead>
           <tbody>
-            {block.exercises.map((ex, i) => (
+            {(block.exercises ?? []).map((ex, i) => (
               <tr
                 key={i}
                 className="hover:bg-[var(--card-hover)] transition-colors"
