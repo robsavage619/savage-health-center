@@ -1,181 +1,222 @@
 <div align="center">
+<br />
 
-# SAVAGE HEALTH CENTER
+```
+███████╗██╗  ██╗ ██████╗
+██╔════╝██║  ██║██╔════╝
+███████╗███████║██║
+╚════██║██╔══██║██║
+███████║██║  ██║╚██████╗
+╚══════╝╚═╝  ╚═╝ ╚═════╝
+```
 
-**A personal health OS. Not a wellness app.**
+### SAVAGE HEALTH CENTER
 
-Recovery · Sleep · Training · Clinical — unified, AI-coached, fully local.
+*A personal health OS — not a wellness app*
 
+<br />
+
+![Python](https://img.shields.io/badge/Python-3.12-1e1e2e?style=flat-square&labelColor=1e1e2e&color=cba6f7)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-1e1e2e?style=flat-square&labelColor=1e1e2e&color=a6e3a1)
+![Next.js](https://img.shields.io/badge/Next.js-15-1e1e2e?style=flat-square&labelColor=1e1e2e&color=89b4fa)
+![Claude](https://img.shields.io/badge/Claude-Sonnet_4.6-1e1e2e?style=flat-square&labelColor=1e1e2e&color=f38ba8)
+![DuckDB](https://img.shields.io/badge/DuckDB-1.1-1e1e2e?style=flat-square&labelColor=1e1e2e&color=fab387)
+
+<br />
 </div>
 
 ---
 
-Every morning you get one question: *can I push today?* WHOOP gives you a score. Apple Health gives you data. Your training log gives you history. None of them talk to each other, and none of them know your medications.
+Every morning there is one question: **can I push today?**
 
-This does.
+WHOOP gives you a score. Apple Health gives you data. Your training log gives you history. None of them know your medications. None of them talk to each other.
 
-SHC pulls from every data source you have, computes derived metrics that matter (HRV deviation in σ, ACWR, sleep consistency, composite readiness), and hands off to Claude Sonnet 4.6 — which knows your full clinical context — to generate today's training call. Everything runs locally. Your data never leaves your machine except to sync with the APIs you already use.
+SHC does. It pulls from every source, computes the metrics that actually matter — HRV deviation in σ, ACWR, composite readiness, volume progression — and hands off to Claude Sonnet 4.6, which knows your full clinical context, to write today's training call.
 
----
+Everything runs locally. Your data never leaves your machine.
 
-## What it looks like
+<br />
 
-Five zones, one screen:
+## The Dashboard
 
-| Zone | What you see |
-|---|---|
-| **Command Briefing** | Recovery score · HRV vs 28d avg · sleep · readiness verdict |
+Five zones, one screen, zero fluff.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  COMMAND BRIEFING                                        │
+│  Recovery 74 · HRV +0.6σ · Sleep 7.4h · TRAIN          │
+├──────────────┬──────────────┬──────────────┬────────────┤
+│  RECOVERY    │  SLEEP       │  LOAD        │  READINESS │
+│  74 ████░░   │  7-night     │  ACWR 1.02   │  71 ██░░   │
+│  HRV +0.6σ   │  stack bars  │  safe zone ✓ │  Δ+4 wk   │
+├──────────────┴──────────────┴──────────────┴────────────┤
+│  TREND INTELLIGENCE                                      │
+│  Recovery · Training Heatmap · Body · Insights · Clinic │
+├─────────────────────────────────────┬───────────────────┤
+│  STRENGTH  heatmap · PRs · volume   │  RAIL  streaks    │
+│                                     │        bests      │
+└─────────────────────────────────────┴───────────────────┘
+                                          ⌘K  AI ADVISOR
+```
+
+| Zone | Signal |
+|:---|:---|
+| **Command Briefing** | Recovery · HRV vs 28d avg · sleep · readiness verdict |
 | **Four Pillars** | Recovery Intelligence · Sleep Architecture · Training Load · Readiness Composite |
-| **Trend Intelligence** | 90-day recovery, training heatmap, body metrics, correlation insights, clinical |
-| **Right Rail** | Streaks · personal bests · week summary · goals |
-| **AI Advisor** | `⌘K` — chat with a coach that knows your HRV, your meds, and your last 12 weeks |
+| **Trend Intelligence** | 90-day recovery, heatmap, body metrics, correlation insights, clinical |
+| **Right Rail** | Streaks · personal bests · week summary |
+| **AI Advisor `⌘K`** | A coach that knows your HRV, your meds, and your last 12 weeks |
 
----
+<br />
 
 ## Stack
 
-| | |
-|---|---|
-| **Backend** | Python 3.12 · FastAPI · DuckDB 1.1 (embedded, encrypted) |
-| **AI** | Claude Sonnet 4.6 · Ollama fallback · APScheduler background sync |
-| **Frontend** | Next.js 15 · React 19 · TypeScript |
-| **UI** | Tailwind CSS v4 · OKLCH tokens · shadcn/ui · Recharts · TanStack Query v5 |
-| **Secrets** | macOS Keychain — nothing sensitive touches disk |
+```
+Backend     Python 3.12 · FastAPI · DuckDB 1.1 (embedded, encrypted)
+AI          Claude Sonnet 4.6 · Ollama fallback · APScheduler
+Frontend    Next.js 15 · React 19 · TypeScript
+UI          Tailwind CSS v4 · OKLCH · shadcn/ui · Recharts · TanStack Query v5
+Secrets     macOS Keychain — nothing sensitive touches disk
+```
 
----
+<br />
 
-## Getting started
+## Quickstart
 
-**Prerequisites:** macOS · Python 3.12+ · Node 20+ · [`uv`](https://github.com/astral-sh/uv)
+**Requires:** macOS · Python 3.12+ · Node 20+ · [`uv`](https://github.com/astral-sh/uv)
 
 ```bash
 git clone <repo-url> savage-health-center
 cd savage-health-center
-make install
-cp env.example .env
+make install && cp env.example .env
 ```
 
-Open `.env` and fill in three things:
+Three keys to fill in:
 
 ```bash
-ANTHROPIC_API_KEY=          # Claude API — powers next-workout and briefings
-WHOOP_CLIENT_ID=            # From your WHOOP developer app
+ANTHROPIC_API_KEY=        # Claude API — next-workout + daily briefings
+WHOOP_CLIENT_ID=          # From your WHOOP developer portal
 WHOOP_CLIENT_SECRET=
 ```
 
-Then:
-
 ```bash
-make seed    # 90 days of synthetic data so the dashboard isn't empty
-make dev     # API → :8000  ·  Web → :3000
+make seed   # populate with 90 days of synthetic data
+make dev    # API :8000 · Web :3000
 ```
 
-Open `http://localhost:3000`. That's it.
-
----
+<br />
 
 ## Commands
 
-```
-make dev         Start everything (honcho: API + frontend)
-make seed        Populate DuckDB with 90 days synthetic data
-make reset       Nuke DB and reseed            (requires CONFIRM=1)
-make doctor      Check config, DuckDB, Ollama
-make logs        Tail all log files
-make lint        ruff check + format
-make typecheck   pyright
-make test        pytest
+```bash
+make dev          # start everything via honcho
+make seed         # 90d synthetic data
+make reset        # nuke + reseed  (CONFIRM=1)
+make doctor       # check config, DuckDB, Ollama
+make logs         # tail all log files
+make lint         # ruff check + format
+make typecheck    # pyright
+make test         # pytest
 ```
 
----
+<br />
 
 ## How it works
 
 ```
-WHOOP API ──────────────┐
-Apple Health (iCloud) ──┼──► ingest ──► DuckDB ──► FastAPI ──► Next.js
-Manual checkins ────────┘                    │
-                                             └──► Claude Sonnet 4.6
-                                                   ├── /api/workout/next
-                                                   └── /api/briefing
+WHOOP API ─────────────┐
+Apple Health (iCloud) ─┼──► ingest ──► DuckDB (encrypted) ──► FastAPI ──► Next.js
+Manual checkins ───────┘                       │
+                                               └──► Claude Sonnet 4.6
+                                                     ├── /api/workout/next
+                                                     └── /api/briefing
 ```
 
-The database is a single encrypted DuckDB file at `$DATA_DIR/shc.duckdb`. Migrations run automatically on startup. No separate database server, no Docker.
+Single encrypted DuckDB file. Migrations run at startup. No database server. No Docker.
+
+<br />
 
 ### Computed metrics
 
-These aren't raw scores — they're derived signals:
+Raw scores are noise. These are signals:
 
-| Metric | Formula |
-|---|---|
-| **HRV deviation** | `(today − 28d avg) / 28d SD` — how many σ off baseline |
-| **ACWR** | 7d avg recovery ÷ 28d avg — acute:chronic ratio (safe zone 0.8–1.3) |
-| **Sleep consistency** | stddev of sleep hours across 7 nights |
-| **Readiness** | HRV 40% + sleep 30% + RHR 20% + subjective 10% |
-| **Volume progression** | last 8 weeks vs prior 8 weeks |
+| Metric | Definition |
+|:---|:---|
+| **HRV deviation** | `(today − 28d avg) ÷ 28d SD` — standard deviations from your own baseline |
+| **ACWR** | 7d avg ÷ 28d avg recovery — acute:chronic ratio, safe zone 0.8–1.3 |
+| **Sleep consistency** | σ of sleep hours across 7 nights — low is good |
+| **Readiness** | HRV 40% + Sleep 30% + RHR 20% + Subjective 10% |
+| **Volume progression** | recent 8w vs prior 8w — are you actually overloading? |
+
+<br />
 
 ### AI coaching
 
-`GET /api/workout/next` sends Claude your readiness tier, 28-day HRV trend, recent training volume, and active medications. It returns a structured session — warmup, blocks with RPE targets, cooldown, clinical notes — cached per day. Pass `?regen=true` to force a fresh call.
+`/api/workout/next` sends Claude your readiness tier, 28d HRV trend, recent training volume, and active medications. Back comes a structured session: warmup → blocks with RPE targets → cooldown → clinical notes. Cached per day; `?regen=true` forces a fresh call.
 
-`GET /api/briefing` generates the daily training call and readiness headline, also cached per day.
-
-LLM mode is configurable:
+`/api/briefing` does the same for your daily training call and readiness headline.
 
 ```bash
-SHC_LLM_MODE=auto        # Claude API with Ollama fallback (default)
-SHC_LLM_MODE=local_only  # never call Anthropic
+SHC_LLM_MODE=auto         # Claude API with Ollama fallback (default)
+SHC_LLM_MODE=local_only   # air-gapped — never calls Anthropic
 ```
 
-Every API call is logged with token counts, cache hit/miss, and USD cost. Spend is capped at `ANTHROPIC_DAILY_CAP_USD`.
+Every call is logged with token counts, cache hit/miss, and cost in USD. Daily spend is capped at `ANTHROPIC_DAILY_CAP_USD`.
 
----
+<br />
 
 ## Data sources
 
-| Source | Integration | Status |
-|---|---|---|
-| WHOOP | OAuth 2.0 → background sync | Live |
-| Apple Health | iCloud HealthAutoExport → CCDA XML parser | Live |
-| Manual checkin | `POST /api/checkin` | Live |
-| Fitbod | CSV import | P2 |
-| Hevy | API key | P2 |
+| Source | Method | |
+|:---|:---|:---|
+| WHOOP | OAuth 2.0 → background sync | ✓ live |
+| Apple Health | iCloud HealthAutoExport → CCDA XML | ✓ live |
+| Manual checkin | `POST /api/checkin` | ✓ live |
+| Fitbod | CSV import | — P2 |
+| Hevy | REST API | — P2 |
 
----
+<br />
 
-## Environment variables
+## Configuration
 
 ```bash
-DATA_DIR=data                            # DuckDB + logs root
+# Storage
+DATA_DIR=data
 
+# Anthropic
 ANTHROPIC_API_KEY=
 ANTHROPIC_DAILY_CAP_USD=2.00
 
+# WHOOP
 WHOOP_CLIENT_ID=
 WHOOP_CLIENT_SECRET=
 WHOOP_REDIRECT_URI=http://127.0.0.1:8000/auth/whoop/callback
 
-SHC_LLM_MODE=auto                        # auto | local_only
+# LLM
+SHC_LLM_MODE=auto
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=llama3.3:70b
 
+# Server
 HOST=127.0.0.1
 PORT=8000
 FRONTEND_ORIGIN=http://localhost:3000
 ```
 
-OAuth tokens, the DB encryption key, and the Hevy API key live in macOS Keychain — not in `.env`.
+> OAuth tokens, DB encryption key, and Hevy API key live in macOS Keychain — not here.
 
----
+<br />
 
 ## Security
 
-All data stays local. No telemetry. The only outbound calls are to APIs you explicitly connect (WHOOP sync, Claude API, Anthropic). DuckDB is encrypted at rest via `shc auth set-db-key`. A session-token layer gates dashboard access on shared machines.
+All data is local. No telemetry. Outbound calls: WHOOP sync, Claude API, Anthropic — nothing else. DuckDB is encrypted at rest (`shc auth set-db-key`). A session-token layer gates the dashboard against casual PHI exposure on shared machines.
+
+<br />
 
 ---
 
-## Docs
+<div align="center">
 
-- [API reference](docs/API.md) — all endpoints with request/response shapes
-- [Contributing](CONTRIBUTING.md) — code style, git conventions, how to add a data source
-- [Changelog](CHANGELOG.md)
+[API Reference](docs/API.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
+
+</div>
