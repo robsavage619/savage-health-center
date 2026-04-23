@@ -5,7 +5,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from shc.ai.briefing import run_daily_briefing
-from shc.ingest import whoop
+from shc.ingest import hevy, whoop
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +25,14 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         "interval",
         minutes=30,
         id="whoop_sync",
+        replace_existing=True,
+        misfire_grace_time=300,
+    )
+    scheduler.add_job(
+        hevy.sync_workouts,
+        "interval",
+        minutes=60,
+        id="hevy_sync",
         replace_existing=True,
         misfire_grace_time=300,
     )
