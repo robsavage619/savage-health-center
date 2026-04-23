@@ -12,11 +12,16 @@ WT="${1:-$REPO}"
 
 echo "▶ Restarting SHC from: $WT"
 
-# Kill anything on the ports
-lsof -ti :3000 -ti :8000 2>/dev/null | xargs kill 2>/dev/null || true
-sleep 1
+# Kill anything on the ports AND any stale uvicorn processes (prevents DuckDB lock conflicts)
+lsof -ti :3000 -ti :8000 2>/dev/null | xargs kill -9 2>/dev/null || true
+pkill -9 -f "uvicorn shc" 2>/dev/null || true
+sleep 2
 
-# Ensure data/logs dir exists
+# Ensure data dir exists — symlink canonical worktree data if not already present
+CANONICAL_DATA="$REPO/.claude/worktrees/zealous-pascal-9be780/backend/data"
+if [[ ! -e "$WT/backend/data" ]]; then
+  ln -sf "$CANONICAL_DATA" "$WT/backend/data"
+fi
 mkdir -p "$WT/backend/data/logs"
 touch "$WT/backend/data/logs/shc.log"
 
