@@ -303,14 +303,14 @@ export function NextWorkoutPane() {
       {data && (
         <div className="space-y-5">
           <ReadinessBanner plan={data} />
-          <WarmupSection items={data.warmup} />
-          {data.blocks.map((block, i) => (
+          <WarmupSection items={data.warmup ?? []} />
+          {(data.blocks ?? []).map((block, i) => (
             <ExerciseTable key={i} block={block} />
           ))}
-          <CooldownRow text={data.cooldown} />
+          <CooldownRow text={data.cooldown ?? ""} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ClinicalCallout notes={data.clinical_notes} />
-            <VaultInsights insights={data.vault_insights} />
+            <ClinicalCallout notes={data.clinical_notes ?? []} />
+            <VaultInsights insights={data.vault_insights ?? []} />
           </div>
         </div>
       )}
