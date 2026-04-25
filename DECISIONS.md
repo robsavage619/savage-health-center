@@ -6,6 +6,16 @@ When adding: include **Context**, **Decision**, **Why**, **Consequences**. Skip 
 
 ---
 
+## 2026-04-25 — DuckDB WAL corruption recovery
+
+**Symptom.** API fails to start with `INTERNAL Error: Failure while replaying WAL file`. Happens after force-killing uvicorn mid-transaction.
+
+**Fix.** `python3 -c "import os; os.remove('<data-dir>/shc.duckdb.wal')"` then restart. The WAL file is at `zealous-pascal-9be780/backend/data/shc.duckdb.wal` (canonical data dir, symlinked from other worktrees). Check `find /Users/robsavage/Projects/savage-health-center -name "*.wal"` to confirm all locations.
+
+**Prevention.** Let uvicorn shut down cleanly (`kill -TERM`, not `-9`) when possible.
+
+---
+
 ## 2026-04-25 — Orbitron font via browser `<link>`, not `next/font/google`
 
 **Context.** `next/font/google` downloads woff2 server-side at dev startup. Server can't reach Google Fonts in this env, so the font silently fell back to Geist. Burned a session debugging.
