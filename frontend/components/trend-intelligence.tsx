@@ -14,15 +14,11 @@ import {
 } from "recharts";
 import { api } from "@/lib/api";
 import { Eyebrow, Metric } from "@/components/ui/metric";
-import { TrainingHeatmap } from "@/components/training-heatmap";
-import { VolumeChart } from "@/components/volume-chart";
-import { PRTable } from "@/components/pr-table";
 import { CorrelationCards } from "@/components/correlation-cards";
 import { ClinicalOverview } from "@/components/clinical-overview";
 import { BodyPane } from "@/components/body-panel";
-import { NextWorkoutPane } from "@/components/next-workout";
 
-const TABS = ["Workout", "Recovery", "Training", "Body", "Insights", "Clinical"] as const;
+const TABS = ["Recovery", "Body", "Insights", "Clinical"] as const;
 type Tab = (typeof TABS)[number];
 
 function RecoveryTrendPane() {
@@ -137,16 +133,6 @@ function RecoveryTrendPane() {
   );
 }
 
-function TrainingPane() {
-  return (
-    <div className="space-y-6">
-      <TrainingHeatmap />
-      <VolumeChart />
-      <PRTable />
-    </div>
-  );
-}
-
 function InsightsPane() {
   return <CorrelationCards />;
 }
@@ -158,7 +144,7 @@ function ClinicalPane() {
 
 
 export function TrendIntelligence() {
-  const [tab, setTab] = useState<Tab>("Workout");
+  const [tab, setTab] = useState<Tab>("Recovery");
 
   return (
     <div className="shc-card shc-enter p-5">
@@ -181,9 +167,7 @@ export function TrendIntelligence() {
         </div>
       </div>
       <div className="mt-2">
-        {tab === "Workout" && <NextWorkoutPane />}
         {tab === "Recovery" && <RecoveryTrendPane />}
-        {tab === "Training" && <TrainingPane />}
         {tab === "Body" && <BodyPane />}
         {tab === "Insights" && <InsightsPane />}
         {tab === "Clinical" && <ClinicalPane />}

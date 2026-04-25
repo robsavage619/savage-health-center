@@ -12,6 +12,14 @@ from shc.auth.keychain import load_token, store_token
 from shc.config import settings
 from shc.db.schema import write_ctx
 
+
+def _client_id() -> str:
+    return load_token("whoop", "client_id") or settings.whoop_client_id or ""
+
+
+def _client_secret() -> str:
+    return load_token("whoop", "client_secret") or settings.whoop_client_secret or ""
+
 log = logging.getLogger(__name__)
 
 WHOOP_BASE = "https://api.prod.whoop.com/developer"
@@ -26,7 +34,7 @@ def get_auth_url() -> str:
     state = secrets.token_urlsafe(16)
     _oauth_state["pending"] = state
     params = {
-        "client_id": settings.whoop_client_id,
+        "client_id": _client_id(),
         "redirect_uri": settings.whoop_redirect_uri,
         "response_type": "code",
         "scope": SCOPES,
@@ -45,8 +53,8 @@ async def exchange_code(code: str, state: str) -> None:
                 "grant_type": "authorization_code",
                 "code": code,
                 "redirect_uri": settings.whoop_redirect_uri,
-                "client_id": settings.whoop_client_id,
-                "client_secret": settings.whoop_client_secret,
+                "client_id": _client_id(),
+                "client_secret": _client_secret(),
             },
         )
         resp.raise_for_status()
@@ -66,8 +74,8 @@ async def _refresh() -> str:
             data={
                 "grant_type": "refresh_token",
                 "refresh_token": refresh,
-                "client_id": settings.whoop_client_id,
-                "client_secret": settings.whoop_client_secret,
+                "client_id": _client_id(),
+                "client_secret": _client_secret(),
             },
         )
         resp.raise_for_status()
@@ -104,19 +112,32 @@ def _hash(data: dict) -> str:
     return hashlib.sha256(str(sorted(data.items())).encode()).hexdigest()[:16]
 
 
+async def _paginate(path: str) -> list[dict]:
+    """Fetch all pages from a v2 WHOOP endpoint using next_token pagination."""
+    records: list[dict] = []
+    params: dict = {"limit": 25}
+    while True:
+        page = await _get(path, params)
+        records.extend(page.get("records", []))
+        next_token = page.get("next_token")
+        if not next_token:
+            break
+        params = {"limit": 25, "nextToken": next_token}
+    return records
+
+
 async def sync_recovery() -> int:
     """Fetch recent recovery records and upsert into DuckDB."""
-    page = await _get("/v1/recovery", {"limit": 25})
-    records = page.get("records", [])
+    records = await _paginate("/v2/recovery")
     async with write_ctx() as conn:
         for r in records:
-            score = r.get("score", {})
+            score = r.get("score") or {}
             external_id = str(r["cycle_id"])
-            date = r.get("created_at", "")[:10]
+            rec_date = r.get("created_at", "")[:10]
             row = {
                 "id": external_id,
                 "source": "whoop",
-                "date": date,
+                "date": rec_date,
                 "score": score.get("recovery_score"),
                 "hrv": score.get("hrv_rmssd_milli"),
                 "rhr": score.get("resting_heart_rate"),
@@ -139,11 +160,10 @@ async def sync_recovery() -> int:
 
 
 async def sync_sleep() -> int:
-    page = await _get("/v1/activity/sleep", {"limit": 25})
-    records = page.get("records", [])
+    records = await _paginate("/v2/activity/sleep")
     async with write_ctx() as conn:
         for r in records:
-            score = r.get("score", {})
+            score = r.get("score") or {}
             stage_summary = score.get("stage_summary", {})
             external_id = str(r["id"])
             row = {
@@ -153,7 +173,7 @@ async def sync_sleep() -> int:
                 "ts_in": r.get("start"),
                 "ts_out": r.get("end"),
                 "stages_json": str(stage_summary),
-                "spo2_avg": score.get("average_spo2"),
+                "spo2_avg": None,  # not in v2 sleep; available in recovery score
                 "rhr": score.get("respiratory_rate"),
                 "hrv": None,
                 "content_hash": _hash(r),

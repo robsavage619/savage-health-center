@@ -93,11 +93,8 @@ async def hevy_push_routine(regen: bool = Query(default=False)) -> dict:
         log.exception("Hevy push-routine failed")
         raise HTTPException(status_code=502, detail=f"Hevy API error: {e}") from e
 
-    routine_id = (
-        result.get("routine", {}).get("id")
-        or result.get("id")
-        or "unknown"
-    )
+    from shc.ingest.hevy import _extract_routine_id
+    routine_id = _extract_routine_id(result)
     return {
         "ok": True,
         "routine_id": routine_id,

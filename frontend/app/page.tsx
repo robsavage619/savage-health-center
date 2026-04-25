@@ -9,6 +9,8 @@ import { RightRail } from "@/components/right-rail";
 import { AdvisorChat } from "@/components/advisor-chat";
 import { SyncStatus } from "@/components/sync-status";
 import { DashboardClock } from "@/components/dashboard-clock";
+import { NextWorkoutCard } from "@/components/next-workout-card";
+import { CardioPanel } from "@/components/cardio-panel";
 
 export default function Dashboard() {
   return (
@@ -32,6 +34,8 @@ export default function Dashboard() {
         <div className="space-y-4 min-w-0">
           <CommandBriefing />
 
+          <NextWorkoutCard />
+
           <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <PillarRecovery />
             <PillarSleep />
@@ -40,6 +44,8 @@ export default function Dashboard() {
           </section>
 
           <StrengthPanel />
+
+          <CardioPanel />
 
           <TrendIntelligence />
         </div>

@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ProgressionDrawer } from "@/components/progression-drawer";
 import {
   BarChart,
   Bar,
@@ -159,7 +160,7 @@ function VolumeTrend() {
 
 // ── PR table ─────────────────────────────────────────────────────────────────
 
-function PRTable() {
+function PRTable({ onPick }: { onPick: (exercise: string) => void }) {
   const today = new Date();
   const { data = [], isLoading } = useQuery({
     queryKey: ["prs"],
@@ -178,7 +179,7 @@ function PRTable() {
     <div className="space-y-2">
       <div className="flex items-baseline justify-between">
         <Eyebrow>Strength PRs · top 15</Eyebrow>
-        <span className="text-[10.5px] text-[var(--text-dim)]">staleness →</span>
+        <span className="text-[10.5px] text-[var(--text-dim)]">click row · est 1RM →</span>
       </div>
       {isLoading ? (
         <div className="space-y-1">
@@ -188,11 +189,14 @@ function PRTable() {
         <div className="space-y-px">
           {data.map((pr, i) => {
             const { label: staleLabel, color: staleColor } = staleness(pr.last_performed);
+            const epleyDelta = pr.est_1rm_lbs - pr.pr_lbs;
             return (
-              <div
+              <button
                 key={pr.exercise}
-                className="flex items-center justify-between px-2 py-[5px] rounded"
+                onClick={() => onPick(pr.exercise)}
+                className="w-full flex items-center justify-between px-2 py-[5px] rounded text-left hover:bg-[var(--card-hover)] transition-colors"
                 style={{ background: i % 2 === 0 ? "oklch(1 0 0 / 0.025)" : "transparent" }}
+                title={`${pr.exercise} — ${pr.pr_lbs} lbs × ${pr.pr_reps} on ${pr.pr_date}`}
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-[9.5px] font-mono w-4 text-right flex-shrink-0 text-[var(--text-faint)]">{i + 1}</span>
@@ -200,11 +204,21 @@ function PRTable() {
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0 ml-2">
                   <span className="text-[11.5px] font-mono tabular-nums text-[var(--text-primary)]">
-                    {pr.pr_lbs} <span className="text-[var(--text-faint)] text-[9.5px]">lbs</span>
+                    {pr.pr_lbs}
+                    <span className="text-[var(--text-faint)] text-[9.5px] ml-0.5">×{pr.pr_reps}</span>
+                  </span>
+                  <span
+                    className="text-[10px] font-mono tabular-nums w-14 text-right text-[var(--chart-line)]"
+                    title="Epley estimated 1RM"
+                  >
+                    ≈{pr.est_1rm_lbs.toFixed(0)}
+                    {epleyDelta > 5 && (
+                      <span className="text-[8.5px] text-[var(--text-faint)] ml-0.5">·1RM</span>
+                    )}
                   </span>
                   <span className="text-[9.5px] font-mono w-8 text-right tabular-nums" style={{ color: staleColor }}>{staleLabel}</span>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -215,7 +229,7 @@ function PRTable() {
 
 // ── Top exercises by frequency ────────────────────────────────────────────────
 
-function TopExercisesTable() {
+function TopExercisesTable({ onPick }: { onPick: (exercise: string) => void }) {
   const { data = [], isLoading } = useQuery({
     queryKey: ["top-exercises"],
     queryFn: () => api.trainingTopExercises(10),
@@ -226,7 +240,7 @@ function TopExercisesTable() {
     <div className="space-y-2">
       <div className="flex items-baseline justify-between">
         <Eyebrow>Most trained · by set volume</Eyebrow>
-        <span className="text-[10.5px] text-[var(--text-dim)]">all-time</span>
+        <span className="text-[10.5px] text-[var(--text-dim)]">click row →</span>
       </div>
       {isLoading ? (
         <div className="space-y-1">
@@ -238,7 +252,11 @@ function TopExercisesTable() {
             const maxSets = data[0]?.total_sets ?? 1;
             const barPct = (ex.total_sets / maxSets) * 100;
             return (
-              <div key={ex.exercise} className="flex items-center gap-3 px-2 py-[5px]">
+              <button
+                key={ex.exercise}
+                onClick={() => onPick(ex.exercise)}
+                className="w-full flex items-center gap-3 px-2 py-[5px] text-left rounded hover:bg-[var(--card-hover)] transition-colors"
+              >
                 <span className="text-[9.5px] font-mono w-4 text-right flex-shrink-0 text-[var(--text-faint)]">{i + 1}</span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline justify-between gap-2">
@@ -250,11 +268,149 @@ function TopExercisesTable() {
                   </div>
                 </div>
                 <span className="text-[10px] font-mono tabular-nums text-[var(--text-faint)] w-16 text-right flex-shrink-0">{ex.pr_lbs} lbs PR</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Muscle balance (push/pull/legs/core) ─────────────────────────────────────
+
+const MUSCLE_LABEL: Record<string, string> = {
+  push: "Push",
+  pull: "Pull",
+  legs: "Legs",
+  core: "Core",
+  other: "Other",
+};
+
+// Approximate weekly set targets (Schoenfeld et al., minimum effective dose).
+const TARGET_WEEKLY: Record<string, number> = {
+  push: 10,
+  pull: 10,
+  legs: 10,
+  core: 6,
+  other: 0,
+};
+
+const MUSCLE_COLOR: Record<string, string> = {
+  push: "oklch(0.72 0.18 25)",
+  pull: "oklch(0.72 0.12 250)",
+  legs: "oklch(0.72 0.18 145)",
+  core: "oklch(0.78 0.18 75)",
+  other: "oklch(0.55 0.05 230)",
+};
+
+function MuscleBalance() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["muscle-balance-4w"],
+    queryFn: () => api.trainingMuscleBalance(4),
+    refetchInterval: 600_000,
+  });
+
+  const groups = data?.groups ?? [];
+  const real = groups.filter((g) => g.group !== "other");
+
+  // Push/pull ratio is the most actionable balance signal.
+  const push = real.find((g) => g.group === "push");
+  const pull = real.find((g) => g.group === "pull");
+  const ratio =
+    push && pull && pull.sets > 0
+      ? push.sets / pull.sets
+      : null;
+  const ratioColor =
+    ratio == null
+      ? "var(--text-faint)"
+      : ratio > 1.4
+        ? "var(--negative)"
+        : ratio < 0.7
+          ? "var(--negative)"
+          : Math.abs(ratio - 1) < 0.2
+            ? "var(--positive)"
+            : "var(--neutral)";
+  const ratioNote =
+    ratio == null
+      ? "—"
+      : ratio > 1.4
+        ? "push-dominant"
+        : ratio < 0.7
+          ? "pull-dominant"
+          : Math.abs(ratio - 1) < 0.2
+            ? "balanced"
+            : "tilted";
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-baseline justify-between">
+        <Eyebrow>Muscle balance · last 4 weeks</Eyebrow>
+        <span className="text-[10.5px] text-[var(--text-dim)]">
+          push:pull{" "}
+          <span className="tabular-nums font-medium" style={{ color: ratioColor }}>
+            {ratio != null ? ratio.toFixed(2) : "—"}
+          </span>
+          <span className="text-[var(--text-faint)]"> · {ratioNote}</span>
+        </span>
+      </div>
+      {isLoading ? (
+        <div className="h-[88px] shc-skeleton rounded" />
+      ) : (
+        <div className="space-y-1.5">
+          {real.map((g) => {
+            const target = TARGET_WEEKLY[g.group] ?? 0;
+            const pct = target > 0 ? Math.min(100, (g.weekly_sets / target) * 100) : 0;
+            const status =
+              target === 0
+                ? "—"
+                : g.weekly_sets >= target * 1.5
+                  ? "high"
+                  : g.weekly_sets >= target
+                    ? "on target"
+                    : g.weekly_sets >= target * 0.5
+                      ? "below"
+                      : "neglected";
+            const statusColor =
+              status === "on target"
+                ? "var(--positive)"
+                : status === "high"
+                  ? "var(--neutral)"
+                  : status === "below"
+                    ? "var(--neutral)"
+                    : status === "neglected"
+                      ? "var(--negative)"
+                      : "var(--text-faint)";
+            return (
+              <div key={g.group} className="flex items-center gap-3">
+                <span className="text-[10.5px] text-[var(--text-dim)] uppercase tracking-wider w-9 flex-shrink-0">
+                  {MUSCLE_LABEL[g.group]}
+                </span>
+                <div className="flex-1 h-[14px] rounded-sm bg-[oklch(1_0_0/0.04)] relative overflow-hidden">
+                  <div
+                    className="absolute inset-y-0 left-0 rounded-sm"
+                    style={{ width: `${pct}%`, background: MUSCLE_COLOR[g.group], opacity: 0.7 }}
+                  />
+                  <div className="absolute inset-y-0 flex items-center px-2 text-[9.5px] font-mono tabular-nums text-[var(--text-primary)]">
+                    {g.weekly_sets.toFixed(1)} / {target} sets·wk
+                  </div>
+                </div>
+                <span
+                  className="text-[9.5px] tabular-nums w-16 text-right flex-shrink-0"
+                  style={{ color: statusColor }}
+                >
+                  {status}
+                </span>
               </div>
             );
           })}
         </div>
       )}
+      <p className="text-[10px] text-[var(--text-faint)] leading-snug">
+        Targets reflect Schoenfeld et al. minimum effective dose (~10 sets/wk
+        per major group, 6 for core). Push:pull within 0.8–1.2 supports shoulder
+        balance.
+      </p>
     </div>
   );
 }
@@ -450,6 +606,7 @@ function SessionHeader() {
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export function StrengthPanel() {
+  const [picked, setPicked] = useState<string | null>(null);
   return (
     <div className="shc-card shc-enter p-5 space-y-6">
       <div className="flex items-baseline justify-between">
@@ -460,14 +617,18 @@ export function StrengthPanel() {
       <SessionHeader />
       <Heatmap />
 
+      <MuscleBalance />
+
       <RecoveryCorrelation />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <VolumeTrend />
-        <PRTable />
+        <PRTable onPick={setPicked} />
       </div>
 
-      <TopExercisesTable />
+      <TopExercisesTable onPick={setPicked} />
+
+      <ProgressionDrawer exercise={picked} onClose={() => setPicked(null)} />
     </div>
   );
 }

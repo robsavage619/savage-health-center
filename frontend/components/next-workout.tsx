@@ -5,6 +5,20 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { Eyebrow } from "@/components/ui/metric";
 import type { WorkoutPlan, WorkoutBlock, WarmupItem } from "@/lib/api";
+import { ProgressionDrawer } from "@/components/progression-drawer";
+
+type PushState =
+  | { kind: "idle" }
+  | { kind: "pushing" }
+  | { kind: "ok"; routineId: string; focus: string }
+  | { kind: "err"; msg: string };
+
+type GenState =
+  | { kind: "idle" }
+  | { kind: "generating" }
+  | { kind: "err"; msg: string };
+
+const CLAUDE_CODE_PROMPT = `Read the live training context at GET http://127.0.0.1:8000/api/workout/context, then generate today's workout plan as a single JSON object. Optimize for two simultaneous goals: get stronger and burn fat (body recomposition). Use real exercise names and weights from Rob's history. Apply the GREEN/YELLOW/RED intensity matrix based on his recovery score. Always include a metabolic finisher (or Z2 walk on red days). Then POST the resulting plan to http://127.0.0.1:8000/api/workout/plan with body { "plan": <plan>, "source": "claude_code", "push_to_hevy": false }. Confirm success.`;
 
 // ── Tier config ──────────────────────────────────────────────────────────────
 
@@ -20,33 +34,43 @@ function ReadinessBanner({ plan }: { plan: WorkoutPlan }) {
   const t = TIER[plan.readiness_tier] ?? TIER.yellow;
   return (
     <div
-      className="rounded-[var(--r-md)] p-4 flex gap-3 items-start"
+      className="rounded-[var(--r-md)] overflow-hidden"
       style={{ background: t.soft, border: `1px solid ${t.border}` }}
     >
-      <div
-        className="w-9 h-9 rounded-full flex items-center justify-center text-base font-bold flex-shrink-0 mt-0.5"
-        style={{ background: t.color, color: "oklch(0.1 0 0)" }}
-      >
-        {t.icon}
-      </div>
-      <div className="min-w-0 space-y-1">
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="text-[12.5px] font-semibold" style={{ color: t.color }}>
-            {t.label}
-          </span>
-          <span className="text-[11px] text-[var(--text-dim)] uppercase tracking-wide font-medium">
-            {plan.recommendation.focus}
-          </span>
-          <span className="text-[11px] text-[var(--text-faint)] tabular-nums">
-            ~{plan.recommendation.estimated_duration_min} min · RPE {plan.recommendation.target_rpe}
-          </span>
+      <div className="p-5 flex gap-4 items-start">
+        <div
+          className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0"
+          style={{ background: t.color, color: "oklch(0.1 0 0)", boxShadow: "0 0 0 4px oklch(1 0 0 / 0.04)" }}
+        >
+          {t.icon}
         </div>
-        <p className="text-[12px] text-[var(--text-muted)] leading-relaxed">
-          {plan.readiness_summary}
-        </p>
-        <p className="text-[11px] text-[var(--text-dim)] leading-snug italic">
-          {plan.recommendation.rationale}
-        </p>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2 flex-wrap mb-1">
+            <span className="text-[18px] font-semibold leading-none" style={{ color: t.color }}>
+              {t.label}
+            </span>
+            <span
+              className="text-[10px] font-semibold uppercase tracking-[0.18em] px-2 py-0.5 rounded-full"
+              style={{ background: "oklch(1 0 0 / 0.06)", color: "var(--text-primary)", border: "1px solid var(--hairline)" }}
+            >
+              {plan.recommendation.focus}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-[var(--text-dim)] tabular-nums mb-3">
+            <span>~{plan.recommendation.estimated_duration_min} min</span>
+            <span className="text-[var(--text-faint)]">•</span>
+            <span>Target RPE {plan.recommendation.target_rpe}</span>
+            <span className="text-[var(--text-faint)]">•</span>
+            <span className="capitalize">{plan.recommendation.intensity} intensity</span>
+          </div>
+          <p className="text-[12.5px] text-[var(--text-muted)] leading-relaxed">
+            {plan.readiness_summary}
+          </p>
+          <p className="text-[11.5px] text-[var(--text-dim)] leading-snug italic mt-2">
+            <span className="text-[var(--text-faint)] not-italic font-semibold uppercase tracking-wider text-[9.5px] mr-1.5">Why</span>
+            {plan.recommendation.rationale}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -100,54 +124,171 @@ function RPEBadge({ rpe }: { rpe: number }) {
 
 // ── Exercise block ───────────────────────────────────────────────────────────
 
-function ExerciseTable({ block }: { block: WorkoutBlock }) {
+function ExerciseHistoryStamp({ name, prescribedLbs }: { name: string; prescribedLbs?: number }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["exercise-last", name],
+    queryFn: () => api.trainingExerciseLast(name),
+    staleTime: 10 * 60 * 1000,
+    retry: 0,
+  });
+  if (isLoading) {
+    return <span className="text-[10px] text-[var(--text-faint)]">history loading…</span>;
+  }
+  if (!data?.found || !data.weight_lbs) {
+    return <span className="text-[10px] text-[var(--text-faint)]">first time</span>;
+  }
+  const days = Math.floor((Date.now() - new Date(data.date! + "T00:00:00").getTime()) / 86_400_000);
+  const ago = days === 0 ? "today" : days === 1 ? "yesterday" : days < 14 ? `${days}d ago` : days < 60 ? `${Math.round(days / 7)}w ago` : `${Math.round(days / 30)}mo ago`;
+  const delta = prescribedLbs != null ? prescribedLbs - data.weight_lbs : null;
+  const deltaColor =
+    delta == null ? "var(--text-faint)"
+    : delta >= 5 ? "var(--positive)"
+    : delta <= -5 ? "var(--negative)"
+    : "var(--text-dim)";
   return (
-    <div>
-      <Eyebrow>{block.label}</Eyebrow>
-      <div className="mt-2 rounded-[var(--r-md)] overflow-hidden" style={{ border: "1px solid var(--hairline)" }}>
-        <table className="w-full text-[12px]">
-          <thead>
-            <tr className="text-[10px] text-[var(--text-faint)] uppercase tracking-wider" style={{ borderBottom: "1px solid var(--hairline)" }}>
-              <th className="px-3 py-2 text-left font-normal">Exercise</th>
-              <th className="px-3 py-2 text-center font-normal w-12">Sets</th>
-              <th className="px-3 py-2 text-center font-normal w-14">Reps</th>
-              <th className="px-3 py-2 text-right font-normal w-20">Weight</th>
-              <th className="px-3 py-2 text-center font-normal w-14">RPE</th>
-              <th className="px-3 py-2 text-left font-normal hidden md:table-cell">Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(block.exercises ?? []).map((ex, i) => (
-              <tr
-                key={i}
-                className="hover:bg-[var(--card-hover)] transition-colors"
-                style={{ borderBottom: i < block.exercises.length - 1 ? "1px solid var(--hairline)" : "none" }}
-              >
-                <td className="px-3 py-2.5 font-medium text-[var(--text-primary)]">{ex.name}</td>
-                <td className="px-3 py-2.5 text-center tabular-nums text-[var(--text-muted)]">{ex.sets}</td>
-                <td className="px-3 py-2.5 text-center tabular-nums text-[var(--text-muted)]">{ex.reps}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">
-                  {ex.weight_lbs ? (
-                    <span className="text-[var(--text-primary)] font-semibold">
-                      {ex.weight_lbs}
-                      <span className="text-[var(--text-faint)] font-normal ml-0.5 text-[10.5px]">lbs</span>
-                    </span>
-                  ) : (
-                    <span className="text-[var(--text-faint)]">BW</span>
-                  )}
-                </td>
-                <td className="px-3 py-2.5 text-center">
-                  <RPEBadge rpe={ex.rpe_target} />
-                </td>
-                <td className="px-3 py-2.5 text-[10.5px] text-[var(--text-dim)] hidden md:table-cell max-w-[200px]">
-                  {ex.notes}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <div className="flex items-center gap-1.5 text-[10.5px] tabular-nums">
+      <span className="text-[var(--text-faint)]">last</span>
+      <span className="text-[var(--text-muted)] font-medium">{data.weight_lbs.toFixed(0)}<span className="text-[var(--text-faint)] font-normal ml-0.5">×{data.reps}</span></span>
+      {data.rpe != null && <span className="text-[var(--text-faint)]">@ {data.rpe.toFixed(1)}</span>}
+      <span className="text-[var(--text-faint)]">·</span>
+      <span className="text-[var(--text-faint)]">{ago}</span>
+      {delta != null && Math.abs(delta) >= 5 && (
+        <span className="font-medium" style={{ color: deltaColor }}>
+          ({delta > 0 ? "+" : ""}{delta.toFixed(0)} lbs)
+        </span>
+      )}
     </div>
+  );
+}
+
+const BLOCK_ACCENT: Record<string, { bar: string; pill: string; pillBg: string }> = {
+  primary: { bar: "var(--positive)", pill: "var(--positive)", pillBg: "var(--positive-soft)" },
+  accessory: { bar: "var(--chart-line)", pill: "var(--chart-line)", pillBg: "oklch(0.72 0.12 250 / 0.12)" },
+  finisher: { bar: "var(--neutral)", pill: "var(--neutral)", pillBg: "var(--neutral-soft)" },
+  metabolic: { bar: "var(--neutral)", pill: "var(--neutral)", pillBg: "var(--neutral-soft)" },
+  conditioning: { bar: "oklch(0.78 0.18 75)", pill: "oklch(0.78 0.18 75)", pillBg: "var(--neutral-soft)" },
+  default: { bar: "var(--hairline-strong)", pill: "var(--text-muted)", pillBg: "oklch(1 0 0 / 0.04)" },
+};
+
+function blockAccent(label: string) {
+  const k = label.toLowerCase();
+  if (k.includes("primary") || k.includes("compound") || k.includes("strength")) return BLOCK_ACCENT.primary;
+  if (k.includes("accessory") || k.includes("hypertrophy")) return BLOCK_ACCENT.accessory;
+  if (k.includes("finisher") || k.includes("metabolic")) return BLOCK_ACCENT.finisher;
+  if (k.includes("conditioning") || k.includes("cardio") || k.includes("zone")) return BLOCK_ACCENT.conditioning;
+  return BLOCK_ACCENT.default;
+}
+
+function ExerciseCard({
+  ex,
+  index,
+  onPick,
+}: {
+  ex: WorkoutBlock["exercises"][number];
+  index: number;
+  onPick: (n: string) => void;
+}) {
+  const isSuperset = (ex.notes ?? "").toLowerCase().includes("superset");
+  return (
+    <button
+      onClick={() => onPick(ex.name)}
+      className="group relative w-full text-left rounded-[var(--r-md)] p-4 transition-all hover:translate-y-[-1px] focus:outline-none"
+      style={{
+        background: "var(--card-hover)",
+        border: "1px solid var(--hairline)",
+        boxShadow: "var(--shadow-flat)",
+      }}
+    >
+      {isSuperset && index > 0 && (
+        <div
+          className="absolute -top-3 left-6 px-2 py-0.5 rounded-full text-[9px] font-semibold tracking-wider uppercase"
+          style={{
+            background: "var(--neutral-soft)",
+            border: "1px solid oklch(0.75 0.18 75 / 0.3)",
+            color: "var(--neutral)",
+          }}
+        >
+          + Superset
+        </div>
+      )}
+
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[10px] tabular-nums w-5 text-center font-mono text-[var(--text-faint)]">
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            <h4 className="text-[14px] font-semibold text-[var(--text-primary)] truncate">{ex.name}</h4>
+          </div>
+
+          <div className="ml-7 flex items-baseline gap-3 flex-wrap mb-2">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[24px] font-light tabular-nums leading-none text-[var(--text-primary)]">
+                {ex.sets}
+              </span>
+              <span className="text-[12px] text-[var(--text-faint)]">×</span>
+              <span className="text-[24px] font-light tabular-nums leading-none text-[var(--text-primary)]">
+                {ex.reps}
+              </span>
+              <span className="text-[10px] text-[var(--text-faint)] uppercase tracking-wider ml-0.5">sets×reps</span>
+            </div>
+
+            {ex.weight_lbs ? (
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[24px] font-light tabular-nums leading-none text-[var(--text-primary)]">
+                  {ex.weight_lbs}
+                </span>
+                <span className="text-[10px] text-[var(--text-faint)] uppercase tracking-wider">lbs</span>
+              </div>
+            ) : (
+              <span className="text-[14px] text-[var(--text-faint)]">bodyweight</span>
+            )}
+
+            <div className="flex items-baseline gap-1">
+              <span className="text-[10px] text-[var(--text-faint)] uppercase tracking-wider">RPE</span>
+              <RPEBadge rpe={ex.rpe_target} />
+            </div>
+          </div>
+
+          <div className="ml-7">
+            <ExerciseHistoryStamp name={ex.name} prescribedLbs={ex.weight_lbs} />
+          </div>
+
+          {ex.notes && !isSuperset && (
+            <p className="ml-7 mt-2 text-[11px] text-[var(--text-dim)] leading-snug">
+              <span className="text-[var(--text-faint)] uppercase tracking-wider text-[9.5px] mr-1.5">Cue</span>
+              {ex.notes}
+            </p>
+          )}
+        </div>
+
+        <span className="text-[var(--text-faint)] text-[14px] mt-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+          ↗
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function ExerciseBlock({ block, onPick }: { block: WorkoutBlock; onPick: (ex: string) => void }) {
+  const accent = blockAccent(block.label);
+  return (
+    <section className="space-y-2.5">
+      <div className="flex items-center gap-2.5">
+        <div className="h-3 w-1 rounded-full" style={{ background: accent.bar }} />
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-primary)]">
+          {block.label}
+        </h3>
+        <span className="text-[10.5px] text-[var(--text-faint)] tabular-nums">
+          {(block.exercises ?? []).length} {block.exercises?.length === 1 ? "exercise" : "exercises"}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {(block.exercises ?? []).map((ex, i) => (
+          <ExerciseCard key={i} ex={ex} index={i} onPick={onPick} />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -240,6 +381,10 @@ function Skeleton() {
 export function NextWorkoutPane() {
   const queryClient = useQueryClient();
   const [regenKey, setRegenKey] = useState(0);
+  const [push, setPush] = useState<PushState>({ kind: "idle" });
+  const [gen, setGen] = useState<GenState>({ kind: "idle" });
+  const [copied, setCopied] = useState(false);
+  const [picked, setPicked] = useState<string | null>(null);
 
   const { data, isLoading, isError, isFetching } = useQuery({
     queryKey: ["workout-next", regenKey],
@@ -251,40 +396,183 @@ export function NextWorkoutPane() {
   function handleRegen() {
     setRegenKey((k) => k + 1);
     queryClient.removeQueries({ queryKey: ["workout-next"] });
+    setPush({ kind: "idle" });
+  }
+
+  async function handlePushHevy() {
+    setPush({ kind: "pushing" });
+    try {
+      const r = await api.hevyPushRoutine(false);
+      setPush({ kind: "ok", routineId: r.routine_id, focus: r.plan_focus });
+    } catch (e) {
+      setPush({ kind: "err", msg: e instanceof Error ? e.message : "push failed" });
+    }
+  }
+
+  async function handleDiscard() {
+    if (!confirm("Discard today's plan and regenerate from current readiness?")) return;
+    try {
+      await api.workoutDelete();
+    } catch {
+      /* even if 404, force a refetch */
+    }
+    handleRegen();
+  }
+
+  async function handleGenerate() {
+    setGen({ kind: "generating" });
+    try {
+      // Try direct Claude API generation first.
+      await api.workoutGenerate();
+      handleRegen();
+      setGen({ kind: "idle" });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "generate failed";
+      setGen({ kind: "err", msg });
+    }
+  }
+
+  async function handleCopyPrompt() {
+    try {
+      await navigator.clipboard.writeText(CLAUDE_CODE_PROMPT);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard refused */
+    }
   }
 
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-end justify-between flex-wrap gap-3 pb-1">
         <div>
-          <Eyebrow>Next workout</Eyebrow>
+          <h2 className="text-[20px] font-semibold tracking-tight text-[var(--text-primary)] leading-none">
+            Today&apos;s Plan
+          </h2>
           {data && (
-            <p className="text-[10.5px] text-[var(--text-faint)] mt-0.5">
-              {new Date(data.generated_at + "T00:00:00").toLocaleDateString("en-US", {
-                weekday: "short", month: "short", day: "numeric",
-              })}
-              {data.source !== "fallback" && ` · ${data.source}`}
-              {data.source === "fallback" && " · fallback"}
-            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-[11px] text-[var(--text-dim)] tabular-nums">
+                {new Date(data.generated_at + "T00:00:00").toLocaleDateString("en-US", {
+                  weekday: "long", month: "short", day: "numeric",
+                })}
+              </span>
+              <span className="text-[var(--text-faint)]">·</span>
+              <span
+                className="text-[9.5px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                style={{
+                  background: data.source === "claude" || data.source === "claude_code"
+                    ? "oklch(0.72 0.12 250 / 0.12)"
+                    : data.source === "fallback"
+                      ? "oklch(1 0 0 / 0.04)"
+                      : "var(--neutral-soft)",
+                  color: data.source === "claude" || data.source === "claude_code"
+                    ? "var(--chart-line)"
+                    : data.source === "fallback"
+                      ? "var(--text-faint)"
+                      : "var(--neutral)",
+                  border: "1px solid var(--hairline)",
+                }}
+              >
+                {data.source === "claude_code" ? "Claude Code" : data.source === "claude" ? "Claude" : data.source}
+              </span>
+              <span className="text-[10px] text-[var(--text-faint)]">
+                Goal: <span className="text-[var(--text-muted)] font-medium">strength + fat loss</span>
+              </span>
+            </div>
           )}
         </div>
-        <button
-          onClick={handleRegen}
-          disabled={isFetching}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--r-sm)] text-[11px] font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{
-            background: "oklch(1 0 0 / 0.05)",
-            border: "1px solid var(--hairline)",
-            color: "var(--text-dim)",
-          }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--text-muted)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--text-dim)"; }}
-        >
-          <span className={isFetching ? "animate-spin inline-block" : ""}>⟳</span>
-          {isFetching ? "Generating…" : "Regenerate"}
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={handleGenerate}
+            disabled={gen.kind === "generating"}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-[var(--r-sm)] text-[11.5px] font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{
+              background: "oklch(0.72 0.12 250 / 0.16)",
+              border: "1px solid oklch(0.72 0.12 250 / 0.4)",
+              color: "var(--chart-line)",
+            }}
+            title="Generate via Claude API"
+          >
+            <span className={gen.kind === "generating" ? "animate-spin inline-block" : ""}>
+              {gen.kind === "generating" ? "⟳" : "✦"}
+            </span>
+            {gen.kind === "generating" ? "Claude is thinking…" : "Generate via Claude"}
+          </button>
+          <button
+            onClick={handleCopyPrompt}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-[var(--r-sm)] text-[11px] font-medium transition-all"
+            style={{
+              background: "oklch(1 0 0 / 0.05)",
+              border: "1px solid var(--hairline)",
+              color: "var(--text-dim)",
+            }}
+            title="Copy a one-shot prompt for Claude Code (CLI)"
+          >
+            {copied ? "✓ Copied" : "⌘ Copy CC prompt"}
+          </button>
+          <button
+            onClick={handlePushHevy}
+            disabled={push.kind === "pushing" || !data}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-[var(--r-sm)] text-[11px] font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{
+              background: push.kind === "ok" ? "var(--positive-soft)" : "oklch(1 0 0 / 0.05)",
+              border: `1px solid ${push.kind === "ok" ? "var(--positive)" : "var(--hairline)"}`,
+              color: push.kind === "ok" ? "var(--positive)" : "var(--text-dim)",
+            }}
+            title="Push this plan to Hevy as a routine"
+          >
+            <span className={push.kind === "pushing" ? "animate-spin inline-block" : ""}>
+              {push.kind === "pushing" ? "⟳" : push.kind === "ok" ? "✓" : "→"}
+            </span>
+            {push.kind === "pushing" ? "Pushing…" : push.kind === "ok" ? "In Hevy" : "Hevy"}
+          </button>
+          <button
+            onClick={handleDiscard}
+            disabled={isFetching || !data}
+            className="flex items-center gap-1.5 px-2.5 py-2 rounded-[var(--r-sm)] text-[11px] font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{
+              background: "transparent",
+              border: "1px solid var(--hairline)",
+              color: "var(--text-faint)",
+            }}
+            title="Delete today's plan"
+          >
+            ✕
+          </button>
+        </div>
       </div>
+
+      {gen.kind === "err" && (
+        <div
+          className="rounded-[var(--r-sm)] px-3 py-2.5 text-[11.5px] flex items-start gap-2"
+          style={{ background: "var(--neutral-soft)", border: "1px solid oklch(0.75 0.18 75 / 0.25)", color: "var(--neutral)" }}
+        >
+          <span className="font-semibold">Direct generation unavailable.</span>
+          <span className="text-[var(--text-muted)]">
+            {gen.msg.includes("ANTHROPIC")
+              ? "Set ANTHROPIC_API_KEY in backend/.env, or click \"Copy CC prompt\" and paste into Claude Code."
+              : gen.msg}
+          </span>
+        </div>
+      )}
+
+      {push.kind === "err" && (
+        <div
+          className="rounded-[var(--r-sm)] px-3 py-2 text-[11px]"
+          style={{ background: "var(--negative-soft)", border: "1px solid oklch(0.65 0.22 25 / 0.25)", color: "var(--negative)" }}
+        >
+          Hevy push failed: {push.msg}
+        </div>
+      )}
+      {push.kind === "ok" && (
+        <div
+          className="rounded-[var(--r-sm)] px-3 py-2 text-[11px]"
+          style={{ background: "var(--positive-soft)", border: "1px solid oklch(0.72 0.18 145 / 0.25)", color: "var(--positive)" }}
+        >
+          ✓ {push.focus} routine ready in Hevy (id {push.routineId.slice(0, 8)}…). Open the app to start.
+        </div>
+      )}
 
       {isLoading && <Skeleton />}
 
@@ -305,7 +593,7 @@ export function NextWorkoutPane() {
           <ReadinessBanner plan={data} />
           <WarmupSection items={data.warmup ?? []} />
           {(data.blocks ?? []).map((block, i) => (
-            <ExerciseTable key={i} block={block} />
+            <ExerciseBlock key={i} block={block} onPick={setPicked} />
           ))}
           <CooldownRow text={data.cooldown ?? ""} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -314,6 +602,8 @@ export function NextWorkoutPane() {
           </div>
         </div>
       )}
+
+      <ProgressionDrawer exercise={picked} onClose={() => setPicked(null)} />
     </div>
   );
 }

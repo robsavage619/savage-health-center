@@ -45,6 +45,12 @@ Five zones, one screen, zero fluff.
 ┌─────────────────────────────────────────────────────────┐
 │  COMMAND BRIEFING                                        │
 │  Recovery 74 · HRV +0.6σ · Sleep 7.4h · TRAIN          │
+├──────────────────────────────────────────────────────────┤
+│  TODAY'S PLAN  Green · Upper Pull · ~55 min · RPE 8     │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐                 │
+│  │ Pull-Up  │ │ Row      │ │ Curl     │  [Hevy ↑]       │
+│  │ 4×5 185# │ │ 3×8 135# │ │ 3×10 45# │  [Generate]    │
+│  └──────────┘ └──────────┘ └──────────┘                 │
 ├──────────────┬──────────────┬──────────────┬────────────┤
 │  RECOVERY    │  SLEEP       │  LOAD        │  READINESS │
 │  74 ████░░   │  7-night     │  ACWR 1.02   │  71 ██░░   │
@@ -54,7 +60,7 @@ Five zones, one screen, zero fluff.
 │  Recovery · Training Heatmap · Body · Insights · Clinic │
 ├─────────────────────────────────────┬───────────────────┤
 │  STRENGTH  heatmap · PRs · volume   │  RAIL  streaks    │
-│                                     │        bests      │
+│  CARDIO  28d mix · sports log       │        bests      │
 └─────────────────────────────────────┴───────────────────┘
                                           ⌘K  AI ADVISOR
 ```
@@ -62,8 +68,11 @@ Five zones, one screen, zero fluff.
 | Zone | Signal |
 |:---|:---|
 | **Command Briefing** | Recovery · HRV vs 28d avg · sleep · readiness verdict |
+| **Today's Plan** | AI-generated workout cards with sets × reps + weight, RPE badge, history delta, Hevy push |
 | **Four Pillars** | Recovery Intelligence · Sleep Architecture · Training Load · Readiness Composite |
 | **Trend Intelligence** | 90-day recovery, heatmap, body metrics, correlation insights, clinical |
+| **Strength** | Training heatmap · PRs · volume progression · per-exercise progression drawer |
+| **Cardio & Sports** | 28-day session summary · zone-mix bar · manual log (pickleball, bike, row, etc.) |
 | **Right Rail** | Streaks · personal bests · week summary |
 | **AI Advisor `⌘K`** | A coach that knows your HRV, your meds, and your last 12 weeks |
 
@@ -126,10 +135,13 @@ make test         # pytest
 ```
 WHOOP API ─────────────┐
 Apple Health (iCloud) ─┼──► ingest ──► DuckDB (encrypted) ──► FastAPI ──► Next.js
-Manual checkins ───────┘                       │
-                                               └──► Claude Sonnet 4.6
+Hevy API (workouts) ───┤                       │
+Manual checkins ───────┘                       └──► Claude Opus 4.7
+                                                     ├── /api/workout/generate
                                                      ├── /api/workout/next
                                                      └── /api/briefing
+                                                              │
+                                                     Hevy API (routines out) ◄─┘
 ```
 
 Single encrypted DuckDB file. Migrations run at startup. No database server. No Docker.
@@ -171,9 +183,10 @@ Every call is logged with token counts, cache hit/miss, and cost in USD. Daily s
 |:---|:---|:---|
 | WHOOP | OAuth 2.0 → background sync | ✓ live |
 | Apple Health | iCloud HealthAutoExport → CCDA XML | ✓ live |
+| Hevy | REST API (sync in + push routines out) | ✓ live |
 | Manual checkin | `POST /api/checkin` | ✓ live |
+| Manual cardio log | `POST /api/cardio/log` | ✓ live |
 | Fitbod | CSV import | — P2 |
-| Hevy | REST API | — P2 |
 
 <br />
 
