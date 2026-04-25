@@ -160,6 +160,13 @@ function LogForm({ onLogged }: { onLogged: () => void }) {
   );
 }
 
+// Keytel formula (male): kcal/min = (-55.0969 + 0.6309×HR + 0.1988×kg + 0.2017×age) / 4.184
+// Rob: 108.8 kg, age 39
+function estimateKcal(avgHr: number, durationMin: number): number {
+  const kcalPerMin = (-55.0969 + 0.6309 * avgHr + 0.1988 * 108.8 + 0.2017 * 39) / 4.184;
+  return Math.round(Math.max(0, kcalPerMin) * durationMin);
+}
+
 const HIDDEN_KEY = "shc:cardio:hidden";
 function loadHidden(): Set<string> {
   try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "[]")); } catch { return new Set(); }
@@ -207,7 +214,14 @@ function SessionRow({
         <span style={{ color: rpeColor(s.rpe) }}>{s.rpe != null ? s.rpe.toFixed(1) : "—"}</span>
       </td>
       <td className="px-3 py-2 text-right tabular-nums text-[var(--text-muted)]">
-        {s.kcal != null ? s.kcal : "—"}
+        {s.kcal != null ? (
+          s.kcal
+        ) : s.avg_hr && s.duration_min ? (
+          <span title="Estimated from avg HR (Keytel formula)">
+            ~{estimateKcal(s.avg_hr, s.duration_min)}
+            <span className="text-[9px] text-[var(--text-faint)] ml-0.5">est</span>
+          </span>
+        ) : "—"}
       </td>
       <td className="px-1 py-2 text-right">
         <button
