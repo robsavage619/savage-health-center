@@ -919,6 +919,7 @@ async def cardio_recent(days: int = Query(60, gt=0, le=365)) -> dict:
               AND NOT EXISTS (
                   SELECT 1 FROM workout_sets ws WHERE ws.workout_id = w.id
               )
+              AND EXTRACT(epoch FROM (w.ended_at - w.started_at)) / 60 >= 5
             ORDER BY w.started_at DESC
             LIMIT 200
             """,

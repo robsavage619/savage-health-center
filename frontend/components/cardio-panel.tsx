@@ -160,7 +160,23 @@ function LogForm({ onLogged }: { onLogged: () => void }) {
   );
 }
 
-function SessionRow({ s, onDelete }: { s: CardioSession; onDelete: (id: string) => void }) {
+const HIDDEN_KEY = "shc:cardio:hidden";
+function loadHidden(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "[]")); } catch { return new Set(); }
+}
+function saveHidden(s: Set<string>) {
+  localStorage.setItem(HIDDEN_KEY, JSON.stringify([...s]));
+}
+
+function SessionRow({
+  s,
+  onDelete,
+  onHide,
+}: {
+  s: CardioSession;
+  onDelete: (id: string) => void;
+  onHide: (id: string) => void;
+}) {
   const m = modalityKey(s.kind);
   const days = Math.floor((Date.now() - new Date(s.date + "T00:00:00").getTime()) / 86_400_000);
   const ago = days === 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
@@ -194,15 +210,13 @@ function SessionRow({ s, onDelete }: { s: CardioSession; onDelete: (id: string) 
         {s.kcal != null ? s.kcal : "—"}
       </td>
       <td className="px-1 py-2 text-right">
-        {s.source === "manual" && (
-          <button
-            onClick={() => onDelete(s.id)}
-            className="text-[var(--text-faint)] hover:text-[var(--negative)] opacity-0 group-hover:opacity-100 transition-opacity text-[12px] px-1"
-            title="Delete"
-          >
-            ✕
-          </button>
-        )}
+        <button
+          onClick={() => s.source === "manual" ? onDelete(s.id) : onHide(s.id)}
+          className="text-[var(--text-faint)] hover:text-[var(--negative)] opacity-0 group-hover:opacity-100 transition-opacity text-[12px] px-1"
+          title={s.source === "manual" ? "Delete" : "Hide (WHOOP false positive)"}
+        >
+          ✕
+        </button>
       </td>
     </tr>
   );
@@ -215,6 +229,15 @@ export function CardioPanel() {
     queryFn: () => api.cardioRecent(60),
     refetchInterval: 600_000,
   });
+  const [hidden, setHidden] = useState<Set<string>>(() => loadHidden());
+
+  function handleHide(id: string) {
+    setHidden(prev => {
+      const next = new Set(prev).add(id);
+      saveHidden(next);
+      return next;
+    });
+  }
 
   async function refresh() {
     await qc.invalidateQueries({ queryKey: ["cardio-recent"] });
@@ -226,7 +249,7 @@ export function CardioPanel() {
     refresh();
   }
 
-  const sessions = data?.sessions ?? [];
+  const sessions = (data?.sessions ?? []).filter(s => !hidden.has(s.id));
   const summary = data?.summary_28d ?? [];
   const total28d = useMemo(
     () => summary.reduce((acc, s) => ({ minutes: acc.minutes + s.minutes, sessions: acc.sessions + s.sessions, kcal: acc.kcal + s.kcal }), { minutes: 0, sessions: 0, kcal: 0 }),
@@ -323,7 +346,7 @@ export function CardioPanel() {
                 </td>
               </tr>
             ) : (
-              sessions.map((s) => <SessionRow key={s.id} s={s} onDelete={handleDelete} />)
+              sessions.map((s) => <SessionRow key={s.id} s={s} onDelete={handleDelete} onHide={handleHide} />)
             )}
           </tbody>
         </table>
@@ -331,6 +354,9 @@ export function CardioPanel() {
       <p className="text-[10px] text-[var(--text-faint)] leading-snug">
         HR zones use 220 − age (≈ 181 max). Z2 (60–70%) builds aerobic base, Z3
         (70–80%) is tempo, Z4–5 are threshold/VO2.
+      </p>
+      <p className="text-[10px] leading-snug" style={{ color: "var(--neutral)" }}>
+        β-blocker (propranolol PRN): on days taken, WHOOP kcal and zone labels underestimate true exertion — HR is suppressed ~15–20 bpm. Use RPE as the ground truth on those days.
       </p>
     </div>
   );
