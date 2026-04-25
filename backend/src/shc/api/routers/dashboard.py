@@ -1293,7 +1293,7 @@ async def whoop_patterns() -> dict:
 
 
 @router.get("/body/steps")
-async def body_steps(days: int = Query(90, gt=0, le=365)) -> list[dict]:
+async def body_steps(days: int = Query(90, gt=0, le=5000)) -> list[dict]:
     since = (date.today() - timedelta(days=days)).isoformat()
     conn = get_read_conn()
     try:

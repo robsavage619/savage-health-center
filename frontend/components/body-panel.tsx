@@ -120,7 +120,7 @@ function VO2MaxPanel() {
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between">
-        <Eyebrow>VO₂ max · estimated from WHOOP RHR</Eyebrow>
+        <Eyebrow>VO₂ max · {(latest as any)?.source === "apple_watch" ? "Apple Watch" : "estimated from WHOOP RHR"}</Eyebrow>
         {latest && zone && (
           <span className="text-[10.5px] font-medium" style={{ color: zone.color }}>{zone.label} for age (39)</span>
         )}
@@ -187,11 +187,22 @@ function VO2MaxPanel() {
 // ── Steps ─────────────────────────────────────────────────────────────────────
 
 function StepsPanel() {
-  const { data = [], isLoading } = useQuery({
+  const recent = useQuery({
     queryKey: ["steps-90"],
     queryFn: () => api.bodySteps(90),
     refetchInterval: 3_600_000,
   });
+  // Fall back to all-time if no recent data (Apple Health export may be older)
+  const historical = useQuery({
+    queryKey: ["steps-alltime"],
+    queryFn: () => api.bodySteps(4000),
+    enabled: !recent.isLoading && recent.data?.length === 0,
+    refetchInterval: 3_600_000,
+  });
+
+  const isLoading = recent.isLoading || historical.isLoading;
+  const data = recent.data?.length ? recent.data : (historical.data ?? []);
+  const windowLabel = recent.data?.length ? "90 days" : data.length ? "all-time" : "";
 
   const avg = data.length ? Math.round(data.reduce((s, d) => s + d.steps, 0) / data.length) : 0;
   const formatted = data.map(d => ({ label: d.date.slice(5), steps: d.steps }));
@@ -209,7 +220,7 @@ function StepsPanel() {
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between">
-        <Eyebrow>Daily steps · 90 days</Eyebrow>
+        <Eyebrow>Daily steps · {windowLabel || "—"}</Eyebrow>
         {avg > 0 && (
           <span className="text-[10.5px] font-mono tabular-nums" style={{ color: avg >= 10000 ? "var(--positive)" : avg >= 7500 ? "var(--neutral)" : "var(--negative)" }}>
             avg {avg.toLocaleString()}/day
