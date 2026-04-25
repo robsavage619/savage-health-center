@@ -5,6 +5,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type CardioSession } from "@/lib/api";
 import { Eyebrow } from "@/components/ui/metric";
 
+const AGE = 39;
+// Tanaka formula: 208 − 0.7×age (more accurate than 220−age for 30–65)
+function hrMax(shift = 0): number {
+  return Math.round(208 - 0.7 * AGE - shift);
+}
+
 const MODALITY_LABEL: Record<string, string> = {
   pickleball: "Pickleball",
   tennis: "Tennis",
@@ -44,10 +50,9 @@ function rpeColor(rpe: number | null | undefined): string {
   return "var(--positive)";
 }
 
-// HR zones based on age 39 max ≈ 181. Could be personalized later.
-function hrZone(hr: number | null | undefined): string {
+function hrZone(hr: number | null | undefined, shift = 0): string {
   if (hr == null) return "—";
-  const max = 181;
+  const max = hrMax(shift);
   const pct = hr / max;
   if (pct < 0.6) return "Z1";
   if (pct < 0.7) return "Z2";
@@ -161,10 +166,10 @@ function LogForm({ onLogged }: { onLogged: () => void }) {
 }
 
 // Keytel formula (male): kcal/min = (-55.0969 + 0.6309×HR + 0.1988×kg + 0.2017×age) / 4.184
-// Rob: 108.8 kg, age 39
-function estimateKcal(avgHr: number, durationMin: number): number {
-  const kcalPerMin = (-55.0969 + 0.6309 * avgHr + 0.1988 * 108.8 + 0.2017 * 39) / 4.184;
-  return Math.round(Math.max(0, kcalPerMin) * durationMin);
+// Rob: 108.8 kg, age 39. On propranolol days, HR is blunted ~20 bpm → multiply by kcal_multiplier (1.25).
+function estimateKcal(avgHr: number, durationMin: number, kcalMultiplier = 1.0): number {
+  const kcalPerMin = (-55.0969 + 0.6309 * avgHr + 0.1988 * 108.8 + 0.2017 * AGE) / 4.184;
+  return Math.round(Math.max(0, kcalPerMin) * durationMin * kcalMultiplier);
 }
 
 const HIDDEN_KEY = "shc:cardio:hidden";
@@ -177,16 +182,21 @@ function saveHidden(s: Set<string>) {
 
 function SessionRow({
   s,
+  hrShift,
+  kcalMultiplier,
   onDelete,
   onHide,
 }: {
   s: CardioSession;
+  hrShift: number;
+  kcalMultiplier: number;
   onDelete: (id: string) => void;
   onHide: (id: string) => void;
 }) {
   const m = modalityKey(s.kind);
   const days = Math.floor((Date.now() - new Date(s.date + "T00:00:00").getTime()) / 86_400_000);
   const ago = days === 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
+  const shifted = days === 0 && hrShift > 0;
   return (
     <tr className="hover:bg-[var(--card-hover)] transition-colors group">
       <td className="px-3 py-2 text-[var(--text-muted)] tabular-nums whitespace-nowrap">
@@ -204,7 +214,14 @@ function SessionRow({
         {s.avg_hr != null ? (
           <span>
             <span className="text-[var(--text-primary)]">{s.avg_hr}</span>
-            <span className="text-[var(--text-faint)] text-[9.5px] ml-1">{hrZone(s.avg_hr)}</span>
+            <span
+              className="text-[9.5px] ml-1"
+              style={{ color: shifted ? "var(--neutral)" : "var(--text-faint)" }}
+              title={shifted ? `Zone adjusted for propranolol (−${hrShift} bpm HR max)` : undefined}
+            >
+              {hrZone(s.avg_hr, shifted ? hrShift : 0)}
+              {shifted && "*"}
+            </span>
           </span>
         ) : (
           <span className="text-[var(--text-faint)]">—</span>
@@ -215,11 +232,16 @@ function SessionRow({
       </td>
       <td className="px-3 py-2 text-right tabular-nums text-[var(--text-muted)]">
         {s.kcal != null ? (
-          s.kcal
+          shifted ? (
+            <span title={`WHOOP value ×${kcalMultiplier} for propranolol-adjusted exertion`}>
+              ~{Math.round(s.kcal * kcalMultiplier)}
+              <span className="text-[9px] text-[var(--text-faint)] ml-0.5">β-adj</span>
+            </span>
+          ) : s.kcal
         ) : s.avg_hr && s.duration_min ? (
-          <span title="Estimated from avg HR (Keytel formula)">
-            ~{estimateKcal(s.avg_hr, s.duration_min)}
-            <span className="text-[9px] text-[var(--text-faint)] ml-0.5">est</span>
+          <span title={`Estimated from avg HR (Keytel)${shifted ? ` ×${kcalMultiplier} β-adj` : ""}`}>
+            ~{estimateKcal(s.avg_hr, s.duration_min, shifted ? kcalMultiplier : 1.0)}
+            <span className="text-[9px] text-[var(--text-faint)] ml-0.5">{shifted ? "β-adj" : "est"}</span>
           </span>
         ) : "—"}
       </td>
@@ -243,6 +265,13 @@ export function CardioPanel() {
     queryFn: () => api.cardioRecent(60),
     refetchInterval: 600_000,
   });
+  const stateQ = useQuery({
+    queryKey: ["daily-state"],
+    queryFn: api.dailyState,
+    staleTime: 5 * 60 * 1000,
+  });
+  const hrShift = stateQ.data?.gates.hr_zone_shift_bpm ?? 0;
+  const kcalMultiplier = stateQ.data?.gates.kcal_multiplier ?? 1.0;
   const [hidden, setHidden] = useState<Set<string>>(() => loadHidden());
 
   function handleHide(id: string) {
@@ -360,17 +389,16 @@ export function CardioPanel() {
                 </td>
               </tr>
             ) : (
-              sessions.map((s) => <SessionRow key={s.id} s={s} onDelete={handleDelete} onHide={handleHide} />)
+              sessions.map((s) => <SessionRow key={s.id} s={s} hrShift={hrShift} kcalMultiplier={kcalMultiplier} onDelete={handleDelete} onHide={handleHide} />)
             )}
           </tbody>
         </table>
       </div>
       <p className="text-[10px] text-[var(--text-faint)] leading-snug">
-        HR zones use 220 − age (≈ 181 max). Z2 (60–70%) builds aerobic base, Z3
-        (70–80%) is tempo, Z4–5 are threshold/VO2.
-      </p>
-      <p className="text-[10px] leading-snug" style={{ color: "var(--neutral)" }}>
-        β-blocker (propranolol PRN): on days taken, WHOOP kcal and zone labels underestimate true exertion — HR is suppressed ~15–20 bpm. Use RPE as the ground truth on those days.
+        HR zones use Tanaka formula (208 − 0.7×age ≈ {hrMax()} max
+        {hrShift > 0 ? `, shifted −${hrShift} bpm today for propranolol` : ""}).
+        Z2 (60–70%) builds aerobic base, Z3 (70–80%) is tempo, Z4–5 are threshold/VO2.
+        {hrShift > 0 && <> Zones marked * are propranolol-adjusted. kcal ×{kcalMultiplier} to correct for blunted HR.</>}
       </p>
     </div>
   );

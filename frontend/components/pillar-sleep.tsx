@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api, type SleepEntry } from "@/lib/api";
+
 import { Eyebrow, Metric } from "@/components/ui/metric";
 
 interface Stages {
@@ -76,6 +77,12 @@ export function PillarSleep() {
     refetchInterval: 5 * 60 * 1000,
   });
   const stats = useQuery({ queryKey: ["stats-summary"], queryFn: api.statsSummary });
+  const stateQ = useQuery({
+    queryKey: ["daily-state"],
+    queryFn: api.dailyState,
+    staleTime: 5 * 60 * 1000,
+  });
+  const spo2Last = stateQ.data?.sleep.spo2_avg_last ?? null;
 
   const entries = data ?? [];
   const parsed = entries.map((e) => ({ e, s: parseStages(e.stages) }));
@@ -113,7 +120,7 @@ export function PillarSleep() {
         <span className="text-[10.5px] text-[var(--text-dim)] tabular-nums">last 7 nights</span>
       </div>
 
-      <div className="grid grid-cols-4 gap-2 mt-3">
+      <div className="grid grid-cols-5 gap-2 mt-3">
         <div>
           <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">Avg</p>
           <Metric value={avgHours ? avgHours.toFixed(1) : "—"} unit="h" size="md" />
@@ -125,6 +132,15 @@ export function PillarSleep() {
         <div>
           <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">REM</p>
           <Metric value={avgRemPct ? avgRemPct.toFixed(0) : "—"} unit="%" size="md" />
+        </div>
+        <div>
+          <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">SpO₂</p>
+          <Metric
+            value={spo2Last != null ? spo2Last.toFixed(1) : "—"}
+            unit={spo2Last != null ? "%" : undefined}
+            size="md"
+            tone={spo2Last == null ? "neutral" : spo2Last >= 95 ? "positive" : spo2Last >= 90 ? "neutral" : "negative"}
+          />
         </div>
         <div>
           <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">Consist.</p>
