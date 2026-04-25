@@ -31,6 +31,9 @@ class Settings(BaseSettings):
         """HealthAutoExport iCloud drop folder."""
         return self.data_dir / "hae"
 
+    # Obsidian vault path — "vault" always refers to this knowledge graph
+    vault_path: Path = Field(default=Path.home() / "Vault/savage_vault")
+
     # Fitbod CSV export path (defaults to iCloud location, override via FITBOD_CSV_PATH env var)
     fitbod_csv_path: Path = Field(
         default=Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/Health Data/Fitness Data/WorkoutExport.csv"

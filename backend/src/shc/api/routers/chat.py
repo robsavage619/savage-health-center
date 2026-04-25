@@ -9,8 +9,9 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from shc.ai.briefing import CHAT_SYSTEM
+from shc.ai.briefing import CHAT_SYSTEM, build_daily_context
 from shc.config import settings
+from shc.db.schema import get_read_conn
 
 router = APIRouter(tags=["chat"])
 log = logging.getLogger(__name__)
@@ -27,13 +28,37 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
 
 
+def _build_system(conn) -> list[dict]:
+    """Build the system prompt blocks: static clinical profile + live data."""
+    live_context = build_daily_context(conn)
+    return [
+        {
+            "type": "text",
+            "text": CHAT_SYSTEM,
+            "cache_control": {"type": "ephemeral"},
+        },
+        {
+            "type": "text",
+            "text": live_context,
+        },
+    ]
+
+
 async def _stream_response(messages: list[dict]):
     if not settings.anthropic_api_key:
-        yield "data: " + json.dumps({"type": "error", "text": "Advisor not configured — add ANTHROPIC_API_KEY to shc.env"}) + "\n\n"
+        yield "data: " + json.dumps({
+            "type": "error",
+            "text": "Advisor not configured — add ANTHROPIC_API_KEY to shc.env",
+        }) + "\n\n"
         return
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    conn = get_read_conn()
+    try:
+        system = _build_system(conn)
+    finally:
+        conn.close()
 
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
@@ -42,13 +67,7 @@ async def _stream_response(messages: list[dict]):
             with client.messages.stream(
                 model=MODEL,
                 max_tokens=1024,
-                system=[
-                    {
-                        "type": "text",
-                        "text": CHAT_SYSTEM,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
+                system=system,
                 messages=messages,
             ) as stream:
                 for text in stream.text_stream:
@@ -81,8 +100,5 @@ async def chat(req: ChatRequest) -> StreamingResponse:
     return StreamingResponse(
         _stream_response(messages),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

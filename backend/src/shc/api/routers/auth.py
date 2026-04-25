@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 
-from shc.ingest.whoop import exchange_code, get_auth_url
+from shc.ingest.whoop import exchange_code, get_auth_url, sync_all
 
 router = APIRouter(tags=["auth"])
 
@@ -19,4 +19,16 @@ async def whoop_callback(code: str, state: str) -> dict:
         await exchange_code(code, state)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Kick off an immediate sync after auth
+    await sync_all()
     return {"status": "authorized"}
+
+
+@router.post("/whoop/sync")
+async def whoop_sync() -> dict:
+    """Manually trigger a WHOOP sync."""
+    try:
+        await sync_all()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "ok"}

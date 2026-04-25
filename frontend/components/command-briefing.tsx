@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type Briefing } from "@/lib/api";
 import { Eyebrow, Dot } from "@/components/ui/metric";
+import { computeReadiness, readinessTone, weightLabel } from "@/lib/readiness";
 
 const CALL_COLOR: Record<string, string> = {
   Push: "var(--positive)",
@@ -12,14 +13,26 @@ const CALL_COLOR: Record<string, string> = {
   Rest: "var(--negative)",
 };
 
+function scrollToPlan() {
+  const el = document.getElementById("next-workout");
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function AiBriefingStrip({ briefing }: { briefing: Briefing }) {
   const color = CALL_COLOR[briefing.training_call] ?? "var(--text-primary)";
   return (
     <div className="border-t border-[var(--hairline)] px-5 py-3 flex items-start gap-4">
-      <div className="shrink-0">
+      <button
+        onClick={scrollToPlan}
+        className="shrink-0 text-left rounded-md px-2 -mx-2 py-1 -my-1 hover:bg-[var(--card-hover)] transition-colors group"
+        title="Jump to today's plan"
+      >
         <p className="text-[9.5px] text-[var(--text-dim)] uppercase tracking-wider mb-0.5">Training call</p>
-        <p className="text-[14px] font-semibold tabular-nums" style={{ color }}>{briefing.training_call}</p>
-      </div>
+        <p className="text-[14px] font-semibold tabular-nums flex items-center gap-1" style={{ color }}>
+          {briefing.training_call}
+          <span className="text-[10px] opacity-0 group-hover:opacity-100 transition-opacity">↓</span>
+        </p>
+      </button>
       <div className="flex-1 min-w-0">
         <p className="text-[11px] text-[var(--text-dim)] uppercase tracking-wider mb-0.5">{briefing.readiness_headline}</p>
         <p className="text-[11.5px] text-[var(--text-muted)] leading-relaxed">{briefing.coaching_note}</p>
@@ -79,6 +92,8 @@ function Slot({
   sub,
   tone: t = "neutral",
   range,
+  chip,
+  title,
 }: {
   label: string;
   value: string;
@@ -86,10 +101,27 @@ function Slot({
   sub?: string;
   tone?: "positive" | "neutral" | "negative";
   range?: { min: number; max: number; cur: number };
+  chip?: string;
+  title?: string;
 }) {
   return (
-    <div className="flex-1 min-w-[120px] px-4 py-3 border-r border-[var(--hairline)] last:border-r-0">
-      <Eyebrow>{label}</Eyebrow>
+    <div className="flex-1 min-w-[120px] px-4 py-3 border-r border-[var(--hairline)] last:border-r-0" title={title}>
+      <div className="flex items-center gap-1.5">
+        <Eyebrow>{label}</Eyebrow>
+        {chip && (
+          <span
+            className="text-[8.5px] font-medium uppercase tracking-wider px-1.5 py-px rounded-sm"
+            style={{
+              color: "var(--neutral)",
+              background: "var(--neutral-soft)",
+              border: "1px solid oklch(0.75 0.18 75 / 0.25)",
+            }}
+            title="HRV signal blunted by beta-blocker; readiness re-weighted"
+          >
+            {chip}
+          </span>
+        )}
+      </div>
       <div className="mt-1 flex items-baseline gap-1.5">
         <span className="metric-lg tabular-nums">{value}</span>
         {unit && <span className="text-[11px] text-[var(--text-dim)]">{unit}</span>}
@@ -117,12 +149,20 @@ export function CommandBriefing() {
     refetchInterval: 10 * 60 * 1000,
     staleTime: 5 * 60 * 1000,
   });
+  const clinical = useQuery({
+    queryKey: ["clinical-overview"],
+    queryFn: api.clinicalOverview,
+    refetchInterval: 60 * 60 * 1000,
+  });
 
   const r = readiness.data;
   const s = stats.data;
   const score = r?.recovery_score ?? null;
   const t = tone(score);
   const v = verdict(score);
+  const readinessResult = computeReadiness(r, s, clinical.data);
+  const composite = readinessResult.score;
+  const compositeTone = readinessTone(composite);
 
   if (readiness.isLoading || stats.isLoading || !r || !s) {
     return (
@@ -177,6 +217,7 @@ export function CommandBriefing() {
               ? { min: s.hrv.baseline_28d * 0.75, max: s.hrv.baseline_28d * 1.25, cur: r.hrv ?? s.hrv.baseline_28d }
               : undefined
           }
+          chip={readinessResult.betaBlocker ? "β-blocker adj" : undefined}
         />
         <Slot
           label="RHR"
@@ -212,10 +253,11 @@ export function CommandBriefing() {
         />
         <Slot
           label="Readiness"
-          value={String(Math.round(computeReadiness(r, s)))}
-          sub="composite"
-          tone={tone(computeReadiness(r, s))}
-          range={{ min: 0, max: 100, cur: computeReadiness(r, s) }}
+          value={composite != null ? String(Math.round(composite)) : "—"}
+          sub={readinessResult.betaBlocker ? "β-adj composite" : "composite"}
+          tone={compositeTone}
+          range={composite != null ? { min: 0, max: 100, cur: composite } : undefined}
+          title={weightLabel(readinessResult.weights)}
         />
       </div>
       {briefing && <AiBriefingStrip briefing={briefing} />}
@@ -223,17 +265,3 @@ export function CommandBriefing() {
   );
 }
 
-function computeReadiness(
-  r: { recovery_score: number; hrv: number; rhr: number; sleep_hours: number; energy: number | null },
-  s: {
-    hrv: { today: number | null; baseline_28d: number | null };
-    rhr: { baseline_28d: number | null };
-  },
-): number {
-  const hrvScore =
-    s.hrv.today && s.hrv.baseline_28d ? Math.max(0, Math.min(100, 50 + ((s.hrv.today - s.hrv.baseline_28d) / s.hrv.baseline_28d) * 300)) : 50;
-  const sleepScore = r.sleep_hours ? Math.max(0, Math.min(100, (r.sleep_hours / 8) * 100)) : 50;
-  const rhrScore = s.rhr.baseline_28d && r.rhr ? Math.max(0, Math.min(100, 100 - ((r.rhr - s.rhr.baseline_28d) / s.rhr.baseline_28d) * 400)) : 50;
-  const subj = r.energy != null ? r.energy * 10 : 70;
-  return 0.4 * hrvScore + 0.3 * sleepScore + 0.2 * rhrScore + 0.1 * subj;
-}

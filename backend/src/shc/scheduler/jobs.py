@@ -4,7 +4,6 @@ import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from shc.ai.briefing import run_daily_briefing
 from shc.ingest import hevy, whoop
 
 log = logging.getLogger(__name__)
@@ -35,14 +34,5 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         id="hevy_sync",
         replace_existing=True,
         misfire_grace_time=300,
-    )
-    scheduler.add_job(
-        run_daily_briefing,
-        "cron",
-        hour=6,
-        minute=0,
-        id="daily_briefing",
-        replace_existing=True,
-        misfire_grace_time=3600,
     )
     log.info("registered APScheduler jobs")

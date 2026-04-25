@@ -50,7 +50,9 @@ async def _post(path: str, body: dict) -> dict:
             headers={"api-key": _api_key(), "Content-Type": "application/json"},
             timeout=30.0,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            log.error("Hevy POST %s failed: %s — body sent: %s", path, resp.text[:500], json.dumps(body)[:1000])
+            raise RuntimeError(f"Hevy {resp.status_code}: {resp.text[:300]}")
     return resp.json()
 
 
@@ -62,7 +64,9 @@ async def _put(path: str, body: dict) -> dict:
             headers={"api-key": _api_key(), "Content-Type": "application/json"},
             timeout=30.0,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            log.error("Hevy PUT %s failed: %s — body sent: %s", path, resp.text[:500], json.dumps(body)[:1000])
+            raise RuntimeError(f"Hevy {resp.status_code}: {resp.text[:300]}")
     return resp.json()
 
 
@@ -367,22 +371,22 @@ async def push_routine(plan: dict) -> dict:
 
     exercises = _plan_to_hevy_exercises(plan, templates)
 
-    body = {
-        "routine": {
-            "title": title,
-            "notes": _routine_notes(plan),
-            "exercises": exercises,
-        }
+    routine_body = {
+        "title": title,
+        "notes": _routine_notes(plan),
+        "exercises": exercises,
     }
 
     if existing_routine:
         routine_id = existing_routine[0]
         log.info("Updating existing Hevy routine %s for %s", routine_id, today)
-        result = await _put(f"/v1/routines/{routine_id}", body)
+        # PUT schema rejects folder_id — keep it out for updates.
+        result = await _put(f"/v1/routines/{routine_id}", {"routine": routine_body})
     else:
         log.info("Creating new Hevy routine for %s", today)
-        result = await _post("/v1/routines", body)
-        routine_id = result.get("routine", {}).get("id") or result.get("id", "unknown")
+        # POST schema requires folder_id (null = root).
+        result = await _post("/v1/routines", {"routine": {**routine_body, "folder_id": None}})
+        routine_id = _extract_routine_id(result)
 
     async with write_ctx() as conn:
         conn.execute(
@@ -399,6 +403,25 @@ async def push_routine(plan: dict) -> dict:
 
     log.info("Pushed routine '%s' (id=%s) to Hevy", title, routine_id)
     return result
+
+
+def _extract_routine_id(result) -> str:
+    """Hevy's POST /v1/routines response wraps the new routine in different
+    shapes across versions: dict with `routine` (dict or list), or a top-level
+    list, or a flat dict. Cover all of them."""
+    candidate: object = result
+    # If the top-level is a dict that wraps under "routine", unwrap.
+    if isinstance(candidate, dict) and "routine" in candidate:
+        candidate = candidate["routine"]
+    # If we ended up with a list, take the first dict.
+    if isinstance(candidate, list):
+        for item in candidate:
+            if isinstance(item, dict) and item.get("id"):
+                return str(item["id"])
+        return "unknown"
+    if isinstance(candidate, dict):
+        return str(candidate.get("id") or "unknown")
+    return "unknown"
 
 
 def _plan_to_hevy_exercises(
@@ -428,7 +451,6 @@ def _plan_to_hevy_exercises(
                     "reps": reps,
                     "duration_seconds": duration,
                     "distance_meters": None,
-                    "rpe": None,
                 }
                 for _ in range(n_sets)
             ],
@@ -449,13 +471,22 @@ def _plan_to_hevy_exercises(
             reps = _parse_reps(ex.get("reps"))
             weight_kg = ex.get("weight_kg")
             if weight_kg is None and ex.get("weight_lbs"):
-                weight_kg = round(ex["weight_lbs"] / 2.20462, 2)
+                weight_kg = round(ex["weight_lbs"] / 2.20462, 4)
             rpe = ex.get("rpe_target")
+
+            # Hevy's POST /routines schema rejects `rpe` on sets — fold it into
+            # the exercise notes instead so the prescription survives the round-trip.
+            note_parts: list[str] = []
+            if rpe is not None:
+                note_parts.append(f"RPE {rpe}")
+            if ex.get("notes"):
+                note_parts.append(ex["notes"])
+            combined_notes = " · ".join(note_parts)
 
             exercises.append({
                 "exercise_template_id": template_id,
                 "superset_id": None,
-                "notes": ex.get("notes") or "",
+                "notes": combined_notes,
                 "sets": [
                     {
                         "type": "normal",
@@ -463,7 +494,6 @@ def _plan_to_hevy_exercises(
                         "reps": reps,
                         "duration_seconds": None,
                         "distance_meters": None,
-                        "rpe": rpe,
                     }
                     for _ in range(n_sets)
                 ],

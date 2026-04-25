@@ -1,9 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Area, AreaChart, ResponsiveContainer } from "recharts";
+import { Area, AreaChart, ResponsiveContainer, ReferenceLine, Scatter, ComposedChart, XAxis, YAxis, Tooltip } from "recharts";
 import { api } from "@/lib/api";
 import { Eyebrow, Metric } from "@/components/ui/metric";
+import { hasBetaBlocker } from "@/lib/readiness";
 
 function toneFor(score: number | null | undefined) {
   if (score == null) return { color: "var(--neutral)", token: "neutral" as const };
@@ -90,6 +91,8 @@ export function PillarRecovery() {
   const readiness = useQuery({ queryKey: ["readiness"], queryFn: api.readinessToday });
   const trend = useQuery({ queryKey: ["recovery-trend-14"], queryFn: () => api.recoveryTrend(14) });
   const stats = useQuery({ queryKey: ["stats-summary"], queryFn: api.statsSummary });
+  const clinical = useQuery({ queryKey: ["clinical-overview"], queryFn: api.clinicalOverview });
+  const betaBlocker = hasBetaBlocker(clinical.data);
 
   const score = readiness.data?.recovery_score ?? null;
   const t = toneFor(score);
@@ -107,17 +110,36 @@ export function PillarRecovery() {
   const rhrBase = stats.data?.rhr.baseline_28d;
   const rhrElevated = stats.data?.rhr.elevated_pct ?? 0;
 
+  const recoveryToday = useQuery({ queryKey: ["recovery-today"], queryFn: api.recoveryToday });
+  const skinDelta = recoveryToday.data?.skin_temp_delta ?? null;
+  const skinTone =
+    skinDelta == null
+      ? "neutral"
+      : Math.abs(skinDelta) >= 0.5
+        ? "negative"
+        : Math.abs(skinDelta) >= 0.3
+          ? "neutral"
+          : "positive";
+
   const drivers: { label: string; tone: "positive" | "neutral" | "negative" }[] = [];
   if (hrvSigma != null) {
+    const baseLabel =
+      hrvSigma > 0.3 ? "HRV above baseline" : hrvSigma < -0.3 ? "HRV below baseline" : "HRV at baseline";
     drivers.push({
-      label: hrvSigma > 0.3 ? "HRV above baseline" : hrvSigma < -0.3 ? "HRV below baseline" : "HRV at baseline",
-      tone: hrvSigma > 0.3 ? "positive" : hrvSigma < -0.3 ? "negative" : "neutral",
+      label: betaBlocker ? `${baseLabel} (β-blocker blunts signal)` : baseLabel,
+      tone: hrvSigma > 0.3 ? "positive" : hrvSigma < -0.3 ? (betaBlocker ? "neutral" : "negative") : "neutral",
     });
   }
   if (rhrElevated != null) {
     drivers.push({
       label: rhrElevated > 3 ? "RHR elevated" : rhrElevated < -2 ? "RHR improving" : "RHR stable",
       tone: rhrElevated > 3 ? "negative" : rhrElevated < -2 ? "positive" : "neutral",
+    });
+  }
+  if (skinDelta != null && Math.abs(skinDelta) >= 0.5) {
+    drivers.push({
+      label: skinDelta > 0 ? `Skin temp +${skinDelta.toFixed(2)}°C — possible illness` : `Skin temp ${skinDelta.toFixed(2)}°C below baseline`,
+      tone: "negative",
     });
   }
   const sleepH = readiness.data?.sleep_hours;
@@ -143,15 +165,50 @@ export function PillarRecovery() {
         <div className="flex-1 min-w-0">
           <div className="h-[72px] -mx-2">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={sparkData} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+              <ComposedChart data={sparkData} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
                 <defs>
                   <linearGradient id="rec-spark" x1="0" x2="0" y1="0" y2="1">
                     <stop offset="0%" stopColor={t.color} stopOpacity="0.35" />
                     <stop offset="100%" stopColor={t.color} stopOpacity="0" />
                   </linearGradient>
                 </defs>
-                <Area dataKey="score" stroke={t.color} strokeWidth={1.5} fill="url(#rec-spark)" dot={false} isAnimationActive={false} />
-              </AreaChart>
+                <YAxis hide domain={[0, 100]} />
+                <XAxis dataKey="date" hide />
+                <ReferenceLine y={67} stroke="var(--chart-grid)" strokeDasharray="2 3" strokeOpacity={0.6} />
+                <ReferenceLine y={34} stroke="var(--chart-grid)" strokeDasharray="2 3" strokeOpacity={0.6} />
+                <Area
+                  dataKey="score"
+                  stroke={t.color}
+                  strokeWidth={1.5}
+                  fill="url(#rec-spark)"
+                  dot={(props) => {
+                    const { cx, cy, payload } = props;
+                    if (payload?.score == null || payload.score >= 34) return <g key={props.index} />;
+                    return (
+                      <circle
+                        key={props.index}
+                        cx={cx}
+                        cy={cy}
+                        r={2.5}
+                        fill="var(--negative)"
+                        stroke="var(--bg)"
+                        strokeWidth={1}
+                      />
+                    );
+                  }}
+                  isAnimationActive={false}
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: "var(--card-hover)",
+                    border: "1px solid var(--hairline-strong)",
+                    borderRadius: 6,
+                    fontSize: 10.5,
+                  }}
+                  cursor={{ stroke: "var(--hairline-strong)" }}
+                  formatter={(v: number) => [`${v?.toFixed?.(0) ?? v}`, "recovery"]}
+                />
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
           <p className="text-[10.5px] text-[var(--text-dim)] mt-1 tracking-wider uppercase">14d trend</p>
@@ -160,7 +217,22 @@ export function PillarRecovery() {
 
       <div className="grid grid-cols-3 gap-3 mt-4">
         <div className="border-l border-[var(--hairline)] pl-3">
-          <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">HRV</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">HRV</p>
+            {betaBlocker && (
+              <span
+                className="text-[8.5px] font-medium uppercase tracking-wider px-1 py-px rounded-sm"
+                style={{
+                  color: "var(--neutral)",
+                  background: "var(--neutral-soft)",
+                  border: "1px solid oklch(0.75 0.18 75 / 0.25)",
+                }}
+                title="Propranolol blunts HRV — interpret σ deviations cautiously"
+              >
+                β-adj
+              </span>
+            )}
+          </div>
           <div className="mt-0.5">
             <Metric value={hrv ? hrv.toFixed(0) : "—"} unit="ms" size="md" />
           </div>
@@ -185,9 +257,26 @@ export function PillarRecovery() {
         <div className="border-l border-[var(--hairline)] pl-3">
           <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">Skin Δ</p>
           <div className="mt-0.5">
-            <Metric value="—" unit="°F" size="md" />
+            <Metric
+              value={
+                skinDelta != null
+                  ? `${skinDelta > 0 ? "+" : ""}${skinDelta.toFixed(2)}`
+                  : "—"
+              }
+              unit="°C"
+              size="md"
+              tone={skinTone}
+            />
           </div>
-          <p className="text-[10.5px] text-[var(--text-muted)] mt-0.5">pending WHOOP</p>
+          <p className="text-[10.5px] text-[var(--text-muted)] tabular-nums mt-0.5">
+            {skinDelta == null
+              ? "no data"
+              : Math.abs(skinDelta) >= 0.5
+                ? "elevated · illness?"
+                : Math.abs(skinDelta) >= 0.3
+                  ? "watch"
+                  : "normal"}
+          </p>
         </div>
       </div>
 

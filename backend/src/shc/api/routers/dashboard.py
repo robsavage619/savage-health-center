@@ -5,14 +5,42 @@ import logging
 import statistics
 import uuid
 from datetime import date, datetime, timedelta
+from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
+from shc.ai.briefing import build_daily_context, store_briefing
+from shc.ai.workout_planner import build_training_context, load_plan, save_plan, validate_plan
 from shc.config import settings
 from shc.db.schema import get_read_conn, write_ctx
 
 router = APIRouter(tags=["dashboard"])
 log = logging.getLogger(__name__)
+
+
+class WorkoutPlanSubmission(BaseModel):
+    plan: dict[str, Any]
+    source: str = "claude"
+    push_to_hevy: bool = False
+
+
+class BriefingSubmission(BaseModel):
+    training_call: str  # Push | Train | Maintain | Easy | Rest
+    training_rationale: str
+    readiness_headline: str
+    coaching_note: str
+    flags: list[str] = []
+    priority_metric: str = "none"
+
+
+class RetrospectiveSubmission(BaseModel):
+    workout_id: str
+    summary: str
+    progressive_overload_achieved: bool | None = None
+    rpe_vs_target: str | None = None
+    flags: list[str] = []
+    vault_insights: list[str] = []
 
 
 @router.get("/recovery/today")
@@ -22,11 +50,23 @@ async def recovery_today() -> dict:
         row = conn.execute(
             "SELECT date, score, hrv, rhr, skin_temp FROM recovery ORDER BY date DESC LIMIT 1"
         ).fetchone()
+        baseline = conn.execute(
+            "SELECT AVG(skin_temp) FROM recovery WHERE skin_temp IS NOT NULL AND date >= (current_date - INTERVAL '28 days')"
+        ).fetchone()
     finally:
         conn.close()
     if not row:
         return {}
-    return {"date": str(row[0]), "score": row[1], "hrv": row[2], "rhr": row[3], "skin_temp": row[4]}
+    base = float(baseline[0]) if baseline and baseline[0] is not None else None
+    return {
+        "date": str(row[0]),
+        "score": row[1],
+        "hrv": row[2],
+        "rhr": row[3],
+        "skin_temp": row[4],
+        "skin_temp_baseline_28d": round(base, 2) if base else None,
+        "skin_temp_delta": round(float(row[4]) - base, 2) if (row[4] is not None and base) else None,
+    }
 
 
 @router.get("/recovery/trend")
@@ -574,25 +614,53 @@ async def training_weekly(weeks: int = Query(52, gt=0, le=260)) -> list[dict]:
 
 @router.get("/training/prs")
 async def training_prs(n: int = Query(15, gt=0, le=100)) -> list[dict]:
+    """PRs ranked by max weight, with reps-at-PR + Epley estimated 1RM.
+
+    Epley: 1RM = weight * (1 + reps/30). For a true 1-rep set this collapses
+    to the lifted weight.
+    """
     conn = get_read_conn()
     try:
         rows = conn.execute(
             """
-            SELECT exercise, MAX(weight_kg) AS pr_kg, MAX(started_at::DATE) AS last_performed
-            FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
-            WHERE ws.is_warmup = FALSE
-              AND weight_kg IS NOT NULL
-              AND weight_kg > 20
-              AND weight_kg < 300
-              AND reps IS NOT NULL AND reps > 0
-              AND NOT regexp_matches(lower(exercise),
-                'plank|push.?up|pull.?up|chin.?up|dip|crunch|sit.?up|burpee|'
-                'box.jump|jump|lunge|squat air|air squat|scissor|superman|'
-                'mountain.climb|bicycle|flutter|leg raise|hollow|bear crawl|'
-                'russian twist|oblique|twist|v.?up|tuck|hyperextension')
-            GROUP BY exercise
-            HAVING COUNT(*) >= 5 AND STDDEV(weight_kg) > 2
+            WITH pr AS (
+                SELECT
+                    ws.exercise,
+                    MAX(ws.weight_kg) AS pr_kg
+                FROM workout_sets ws
+                JOIN workouts w ON w.id = ws.workout_id
+                WHERE ws.is_warmup = FALSE
+                  AND weight_kg IS NOT NULL
+                  AND weight_kg > 20
+                  AND weight_kg < 300
+                  AND reps IS NOT NULL AND reps > 0
+                  AND NOT regexp_matches(lower(exercise),
+                    'plank|push.?up|pull.?up|chin.?up|dip|crunch|sit.?up|burpee|'
+                    'box.jump|jump|lunge|squat air|air squat|scissor|superman|'
+                    'mountain.climb|bicycle|flutter|leg raise|hollow|bear crawl|'
+                    'russian twist|oblique|twist|v.?up|tuck|hyperextension')
+                GROUP BY ws.exercise
+                HAVING COUNT(*) >= 5 AND STDDEV(weight_kg) > 2
+            ),
+            pr_set AS (
+                SELECT
+                    pr.exercise,
+                    pr.pr_kg,
+                    MAX(ws.reps) AS pr_reps,
+                    MAX(w.started_at::DATE) AS pr_date,
+                    MAX(w2.last) AS last_performed
+                FROM pr
+                JOIN workout_sets ws ON ws.exercise = pr.exercise AND ws.weight_kg = pr.pr_kg
+                JOIN workouts w ON w.id = ws.workout_id
+                JOIN (
+                    SELECT exercise, MAX(started_at::DATE) AS last
+                    FROM workout_sets ws3 JOIN workouts w3 ON w3.id = ws3.workout_id
+                    GROUP BY exercise
+                ) w2 ON w2.exercise = pr.exercise
+                GROUP BY pr.exercise, pr.pr_kg
+            )
+            SELECT exercise, pr_kg, pr_reps, pr_date, last_performed
+            FROM pr_set
             ORDER BY pr_kg DESC
             LIMIT $n
             """,
@@ -600,10 +668,64 @@ async def training_prs(n: int = Query(15, gt=0, le=100)) -> list[dict]:
         ).fetchall()
     finally:
         conn.close()
-    return [
-        {"exercise": r[0], "pr_lbs": round(r[1] * 2.20462, 1), "pr_kg": round(r[1], 1), "last_performed": str(r[2])}
-        for r in rows
-    ]
+
+    out = []
+    for ex, pr_kg, pr_reps, pr_date, last in rows:
+        reps = int(pr_reps or 1)
+        est_1rm_kg = float(pr_kg) * (1 + reps / 30.0)
+        out.append({
+            "exercise": ex,
+            "pr_lbs": round(pr_kg * 2.20462, 1),
+            "pr_kg": round(pr_kg, 1),
+            "pr_reps": reps,
+            "pr_date": str(pr_date),
+            "est_1rm_lbs": round(est_1rm_kg * 2.20462, 1),
+            "est_1rm_kg": round(est_1rm_kg, 1),
+            "last_performed": str(last),
+        })
+    return out
+
+
+@router.get("/training/exercise-last")
+async def training_exercise_last(exercise: str = Query(..., description="Exercise name (substring, case-insensitive)")) -> dict:
+    """Return the most recent working set for an exercise — used as the
+    plan-vs-history anchor on the Next Workout view (`last: 185×5 @ RPE 8`).
+    """
+    conn = get_read_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                ws.exercise,
+                w.started_at::DATE AS day,
+                ws.weight_kg,
+                ws.reps,
+                ws.rpe
+            FROM workout_sets ws
+            JOIN workouts w ON w.id = ws.workout_id
+            WHERE ws.is_warmup = FALSE
+              AND LOWER(ws.exercise) LIKE $pat
+              AND ws.weight_kg IS NOT NULL
+              AND ws.reps IS NOT NULL AND ws.reps > 0
+            ORDER BY w.started_at DESC, ws.weight_kg DESC
+            LIMIT 1
+            """,
+            {"pat": f"%{exercise.lower()}%"},
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"found": False, "exercise": exercise}
+    ex, day, wkg, reps, rpe = row
+    return {
+        "found": True,
+        "exercise": ex,
+        "date": str(day),
+        "weight_kg": round(wkg, 1),
+        "weight_lbs": round(wkg * 2.20462, 1),
+        "reps": int(reps),
+        "rpe": float(rpe) if rpe is not None else None,
+    }
 
 
 @router.get("/training/top-exercises")
@@ -715,6 +837,213 @@ async def training_overload_signal() -> dict:
     }
 
 
+class CardioLog(BaseModel):
+    date: str | None = None
+    modality: str
+    duration_min: int
+    avg_hr: int | None = None
+    rpe: float | None = None
+    notes: str | None = None
+
+
+@router.post("/cardio/log")
+async def cardio_log(body: CardioLog) -> dict:
+    """Log a cardio session (pickleball, walking, biking, etc.)."""
+    import hashlib
+    import uuid
+    d = body.date or date.today().isoformat()
+    cid = str(uuid.uuid4())
+    payload = f"{d}|{body.modality}|{body.duration_min}|{body.avg_hr}|{body.rpe}|{body.notes or ''}"
+    chash = hashlib.sha256(payload.encode()).hexdigest()[:16]
+    async with write_ctx() as conn:
+        conn.execute(
+            """
+            INSERT INTO cardio_sessions
+              (id, date, modality, duration_min, avg_hr, rpe, zone_distribution_json, content_hash)
+            VALUES ($id, $d, $m, $dur, $hr, $rpe, NULL, $h)
+            """,
+            {"id": cid, "d": d, "m": body.modality, "dur": body.duration_min, "hr": body.avg_hr, "rpe": body.rpe, "h": chash},
+        )
+    return {"status": "ok", "id": cid, "date": d}
+
+
+@router.delete("/cardio/log/{cid}")
+async def cardio_delete(cid: str) -> dict:
+    async with write_ctx() as conn:
+        conn.execute("DELETE FROM cardio_sessions WHERE id = $id", {"id": cid})
+    return {"status": "ok", "id": cid}
+
+
+@router.get("/_diag/sql")
+async def diag_sql(q: str = Query(..., description="Read-only SELECT query")) -> dict:
+    """Local-only: execute a one-shot SELECT to inspect data shape. Refuses
+    anything that isn't a SELECT to keep accidents impossible."""
+    if not q.strip().lower().startswith("select"):
+        raise HTTPException(status_code=400, detail="SELECT only")
+    conn = get_read_conn()
+    try:
+        rows = conn.execute(q).fetchall()
+        cols = [d[0] for d in conn.description] if conn.description else []
+    finally:
+        conn.close()
+    return {"columns": cols, "rows": [list(r) for r in rows[:200]]}
+
+
+@router.get("/cardio/recent")
+async def cardio_recent(days: int = Query(60, gt=0, le=365)) -> dict:
+    """Recent non-strength activity: WHOOP/Apple workouts + cardio_sessions.
+
+    Surfaces pickleball, walking, biking, etc. — anything tracked outside
+    the Hevy lifting log. Used to power the Cardio & Sports panel.
+    """
+    conn = get_read_conn()
+    try:
+        # Strength sessions live in workout_sets — we want everything that
+        # ISN'T already represented as a lifting session today.
+        sessions = conn.execute(
+            """
+            SELECT
+                w.id,
+                w.started_at::DATE AS day,
+                w.started_at,
+                w.ended_at,
+                COALESCE(w.kind, 'workout') AS kind,
+                w.strain,
+                w.avg_hr,
+                w.max_hr,
+                w.kcal,
+                w.source,
+                EXTRACT(epoch FROM (w.ended_at - w.started_at)) / 60 AS duration_min
+            FROM workouts w
+            WHERE w.started_at::DATE >= (current_date - $d * INTERVAL '1 day')
+              AND NOT EXISTS (
+                  SELECT 1 FROM workout_sets ws WHERE ws.workout_id = w.id
+              )
+            ORDER BY w.started_at DESC
+            LIMIT 200
+            """,
+            {"d": days},
+        ).fetchall()
+
+        cardio = conn.execute(
+            """
+            SELECT id, date, modality, duration_min, avg_hr, rpe, zone_distribution_json
+            FROM cardio_sessions
+            WHERE date >= (current_date - $d * INTERVAL '1 day')
+            ORDER BY date DESC
+            LIMIT 200
+            """,
+            {"d": days},
+        ).fetchall()
+    finally:
+        conn.close()
+
+    items = []
+    for sid, day, start, end, kind, strain, avg_hr, max_hr, kcal, source, dur in sessions:
+        items.append({
+            "id": sid,
+            "date": str(day),
+            "started_at": str(start) if start else None,
+            "kind": (kind or "workout").lower(),
+            "strain": round(float(strain), 1) if strain is not None else None,
+            "avg_hr": int(avg_hr) if avg_hr is not None else None,
+            "max_hr": int(max_hr) if max_hr is not None else None,
+            "kcal": round(float(kcal)) if kcal is not None else None,
+            "duration_min": round(float(dur)) if dur is not None else None,
+            "source": source,
+        })
+    for cid, day, mod, dur, avg_hr, rpe, zones_json in cardio:
+        items.append({
+            "id": cid,
+            "date": str(day),
+            "started_at": None,
+            "kind": (mod or "cardio").lower(),
+            "strain": None,
+            "avg_hr": int(avg_hr) if avg_hr is not None else None,
+            "max_hr": None,
+            "kcal": None,
+            "duration_min": int(dur) if dur is not None else None,
+            "source": "manual",
+            "rpe": float(rpe) if rpe is not None else None,
+        })
+
+    items.sort(key=lambda r: r["date"], reverse=True)
+
+    # Aggregate weekly cardio minutes & top modalities for the panel header.
+    by_kind: dict[str, dict] = {}
+    cutoff = (date.today() - timedelta(days=28)).isoformat()
+    for s in items:
+        if s["date"] < cutoff:
+            continue
+        k = s["kind"]
+        b = by_kind.setdefault(k, {"sessions": 0, "minutes": 0, "kcal": 0, "strain": 0.0})
+        b["sessions"] += 1
+        b["minutes"] += s.get("duration_min") or 0
+        b["kcal"] += s.get("kcal") or 0
+        if s.get("strain"):
+            b["strain"] += s["strain"]
+
+    summary = sorted(
+        [{"kind": k, **v} for k, v in by_kind.items()],
+        key=lambda r: r["minutes"],
+        reverse=True,
+    )
+
+    return {
+        "days": days,
+        "sessions": items[:60],
+        "summary_28d": summary,
+    }
+
+
+@router.get("/training/muscle-balance")
+async def training_muscle_balance(weeks: int = Query(4, gt=0, le=52)) -> dict:
+    """Per-muscle-group set + volume breakdown over the last N weeks.
+
+    Used for spotting imbalances (push/pull, lower neglect) and weekly volume targets.
+    """
+    conn = get_read_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT ws.exercise,
+                   COUNT(*) AS sets,
+                   SUM(weight_kg * reps) AS volume_kg
+            FROM workout_sets ws
+            JOIN workouts w ON w.id = ws.workout_id
+            WHERE ws.is_warmup = FALSE
+              AND started_at::DATE >= (current_date - ($w * INTERVAL '7 days'))
+            GROUP BY ws.exercise
+            """,
+            {"w": weeks},
+        ).fetchall()
+    finally:
+        conn.close()
+
+    buckets: dict[str, dict] = {
+        g: {"sets": 0, "volume_kg": 0.0}
+        for g in ("push", "pull", "legs", "core", "other")
+    }
+    for ex, sets_, vol in rows:
+        g = _muscle_group(ex)
+        buckets[g]["sets"] += int(sets_ or 0)
+        buckets[g]["volume_kg"] += float(vol or 0)
+
+    total_sets = sum(b["sets"] for b in buckets.values()) or 1
+    out = [
+        {
+            "group": g,
+            "sets": b["sets"],
+            "volume_kg": round(b["volume_kg"], 1),
+            "share_pct": round(b["sets"] * 100 / total_sets, 1),
+            "weekly_sets": round(b["sets"] / weeks, 1),
+        }
+        for g, b in buckets.items()
+    ]
+    out.sort(key=lambda r: r["sets"], reverse=True)
+    return {"weeks": weeks, "groups": out, "total_sets": total_sets}
+
+
 @router.get("/insights/correlations")
 async def insights_correlations() -> list[dict]:
     conn = get_read_conn()
@@ -752,6 +1081,25 @@ async def insights_correlations() -> list[dict]:
         }
         for r in rows
     ]
+
+
+class MedicationIn(BaseModel):
+    name: str
+    dose: str | None = None
+    frequency: str | None = None
+
+
+@router.post("/clinical/medication")
+async def add_medication(body: MedicationIn) -> dict:
+    """Add an active medication. Used to bootstrap the medications table so
+    the dashboard's beta-blocker awareness works."""
+    import uuid
+    async with write_ctx() as conn:
+        conn.execute(
+            "INSERT INTO medications (id, name, dose, frequency, started) VALUES ($id, $n, $d, $f, current_date)",
+            {"id": str(uuid.uuid4()), "n": body.name, "d": body.dose, "f": body.frequency},
+        )
+    return {"status": "ok", "name": body.name}
 
 
 @router.get("/clinical/overview")
@@ -948,6 +1296,7 @@ def _muscle_group(exercise: str) -> str:
 
 _WORKOUT_CACHE: dict[str, dict] = {}
 
+# kept for reference by the Ollama fallback path only
 _PLAN_SCHEMA = {
     "type": "object",
     "required": ["readiness_tier", "readiness_summary", "recommendation", "warmup", "blocks", "cooldown", "clinical_notes", "vault_insights"],
@@ -1020,52 +1369,232 @@ _WORKOUT_TOOL = {
     },
 }
 
-_SYSTEM_PROMPT = """You are the personal strength and conditioning coach for Rob Savage, 39yo male (6'1", ~239 lbs).
+_SYSTEM_PROMPT = """You are Rob Savage's personal strength + conditioning coach. 39yo male, 6'1", ~239 lbs. Two simultaneous goals: GET STRONGER and BURN FAT (body recomposition).
 
-CLINICAL PROFILE — read before every plan:
-• Lexapro 10mg daily (SSRI) → suppresses HRV; interpret HRV thresholds conservatively
-• Propranolol PRN (as-needed for anxiety, beta blocker) → if taken, blunts HR response — use RPE not HR; strain metrics unreliable on propranolol days
-• Asthma (Alvesco inhaler 2x/day) → use inhaler before hard sessions; monitor for wheeze at high intensity
-• OSA, off CPAP since early 2026 → sleep quality matters more than raw hours
-• Left shoulder fully resolved as of 04/2026 — no restrictions
-• LDL 154 mg/dL (borderline), HbA1c 5.5% (normal) — metabolic health improving
+═══════════════════════════════════════════════════════════════
+PROGRAMMING PHILOSOPHY (apply every plan)
+═══════════════════════════════════════════════════════════════
+• Strength priority: keep heavy compound work — that's what protects lean mass and drives the recomp.
+• Fat-loss lever: density (shorter rest, supersets), metabolic finishers, and a Z2 conditioning piece on most non-deload days.
+• Volume target: 10–15 working sets/muscle group/week; never sacrifice strength sets to chase calorie burn.
+• Every plan should END with either (a) a 6–10 min metabolic finisher (kettlebell complex, sled push, bike intervals) on green/yellow days, OR (b) a Z2 walk/bike block on red/recovery days. This is the fat-burn engine.
+• If recent push:pull or push:legs is imbalanced (see CONTEXT below), bias today toward the deficient group regardless of "most rested."
+• If skin temp >+0.5°C above 28d baseline → recommend rest/Z2 only, flag illness possibility.
+• If sleep <5h → cap intensity at moderate, no PR attempts.
 
-TRAINING HISTORY:
-• 9 years Fitbod data, 33,000+ sets, consistent compound lifter
-• DUP periodization, goal: strength + body recomposition at 39
+═══════════════════════════════════════════════════════════════
+CLINICAL CONTEXT (always factor in)
+═══════════════════════════════════════════════════════════════
+• Propranolol PRN (β-blocker): blunts HR; if taken today → use RPE not HR, strain readings unreliable.
+• Lexapro/Fluoxetine (SSRI): chronic HRV suppression — read σ deviation, not absolute HRV.
+• Asthma + Alvesco: inhaler before high intensity; monitor wheeze.
+• Forefoot overload risk + gait asymmetry: avoid plyometric/jumping cardio. Prefer rowing, biking, sled, ski-erg, kettlebell. Walking/Z2 is fine.
+• OSA off CPAP: deep sleep % > raw hours; raw <6h flags caution.
 
-COACHING PRINCIPLES:
-• Recovery >67 = green; ACWR 0.8–1.3 = safe zone; HRV within ±1σ = normal
-• Sequence to respect 48-72h muscle group recovery
-• Train most rested group when in doubt
-• Compound movements, progressive overload, proper warm-up
+═══════════════════════════════════════════════════════════════
+INTENSITY MATRIX (default; deviate only with reason)
+═══════════════════════════════════════════════════════════════
+GREEN (recovery ≥67, HRV ≥ −0.5σ):
+  Primary: 4 sets × 4–6 reps @ working weight (RPE 8)
+  Accessories: 3 × 8–12 (RPE 7); supersets allowed
+  Finisher: 6–10 min metabolic complex (RPE 7–8)
+  Total: 50–65 min
 
-OUTPUT INSTRUCTIONS:
+YELLOW (recovery 34–66, HRV −1.5 to −0.5σ):
+  Primary: 3 × 6–8 @ ~85% working weight (RPE 7)
+  Accessories: 3 × 10–12 (RPE 6)
+  Finisher: 8–10 min Z2/Z3 bike or row (RPE 5–6)
+  Total: 45–55 min
+
+RED (recovery <34, HRV < −1.5σ, or sleep <5h):
+  Primary: 2 × 8–10 @ 60–70% working weight (RPE 5)
+  Accessories: skip OR 2 × 12–15 light isolation
+  Finisher: 15–25 min Z2 walk/bike/row (RPE 3–4)
+  Total: 30–45 min — recovery work, not training stimulus
+
+═══════════════════════════════════════════════════════════════
+SUPERSET / DENSITY GUIDANCE (fat-loss layer)
+═══════════════════════════════════════════════════════════════
+• On green/yellow days, pair antagonist accessory exercises (e.g. row + press, curl + tricep) with 60s rest — this raises calorie burn ~25% vs straight sets without hurting strength.
+• Encode supersets as two consecutive exercises in the same block with notes: "Superset with previous — 60s rest after pair."
+• Primary compound lifts get full 2–3 min rest. Don't superset the strength work.
+
+═══════════════════════════════════════════════════════════════
+FOR EVERY EXERCISE
+═══════════════════════════════════════════════════════════════
+• Pull the name VERBATIM from Rob's recent Hevy history (see TOP EXERCISES in context). Do not invent generic names.
+• Prescribe weight in lbs, rounded to 5 lbs, derived from his working_weight × intensity %.
+• Notes: 1 short cue (form/tempo) — not a paragraph.
+
+═══════════════════════════════════════════════════════════════
+OUTPUT
+═══════════════════════════════════════════════════════════════
 Respond with ONLY valid JSON — no markdown, no explanation, no code fences.
-The JSON must have exactly these top-level keys:
-  readiness_tier (string: "green"|"yellow"|"red")
-  readiness_summary (string: 1–2 sentences on today's readiness)
-  recommendation (object with keys: intensity, focus, rationale, estimated_duration_min, target_rpe)
-  warmup (array of objects with keys: name, sets?, reps?, duration_sec?, notes?)
-  blocks (array of objects with keys: label, exercises — exercises has: name, sets, reps, weight_lbs?, rpe_target, notes?)
-  cooldown (string)
-  clinical_notes (array of strings)
-  vault_insights (array of strings)
+Top-level keys (exactly):
+  readiness_tier: "green"|"yellow"|"red"
+  readiness_summary: 1–2 sentence read of today's body
+  recommendation: {intensity, focus, rationale (2 sentences MAX, cite numbers), estimated_duration_min, target_rpe}
+  warmup: [{name, sets?, reps?, duration_sec?, notes?}]
+  blocks: [{label, exercises:[{name, sets, reps, weight_lbs?, rpe_target, notes?}]}]
+  cooldown: string
+  clinical_notes: array of strings (always cite propranolol + asthma if relevant)
+  vault_insights: array of strings (cite specific research from context)
 
-Example blocks structure:
-"blocks": [{"label": "PRIMARY — COMPOUND", "exercises": [{"name": "Barbell Squat", "sets": 4, "reps": "5", "weight_lbs": 225, "rpe_target": 8, "notes": ""}]}]
+The plan should feel like it came from a coach who has read every data point — strain, HRV trend, push:pull ratio, body weight, last 5 sessions, cardio mix — and is solving the recomp problem with the data."""
 
-Name actual exercises from Rob's history. Prescribe exact weights from working weight data. Make it feel like it came from a coach who knows every data point about Rob."""
+
+@router.post("/workout/generate")
+async def workout_generate() -> dict:
+    """Generate today's workout plan via Claude (Anthropic API).
+
+    Pipeline:
+      1. Build live training context from DB (recovery, HRV, cardio, balance, etc.)
+      2. Send to Claude Opus with the strength + fat-loss system prompt
+      3. Parse JSON response, validate, persist, return
+    """
+    import anthropic
+    from shc.config import settings
+
+    if not settings.anthropic_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY not configured — falling back to /workout/next stub",
+        )
+
+    conn = get_read_conn()
+    try:
+        context = build_training_context(conn)
+    finally:
+        conn.close()
+
+    user_prompt = (
+        "Generate today's workout plan as JSON only. Use the live data below to "
+        "make every prescription specific (real exercise names, real lbs, real RPE).\n\n"
+        f"{context}"
+    )
+
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    try:
+        response = client.messages.create(
+            model="claude-opus-4-7",
+            max_tokens=2048,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    except Exception as exc:
+        log.exception("Claude generation failed")
+        raise HTTPException(status_code=502, detail=f"Claude API error: {exc}") from exc
+
+    # Extract JSON from response. Be tolerant of code-fence stripping.
+    raw = "".join(b.text for b in response.content if hasattr(b, "text")).strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.startswith("json"):
+            raw = raw[4:].strip()
+    try:
+        plan = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        log.error("Claude returned non-JSON: %s", raw[:300])
+        raise HTTPException(status_code=502, detail=f"Claude returned non-JSON: {exc}") from exc
+
+    try:
+        validate_plan(plan)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=f"Invalid plan: {exc}") from exc
+
+    today = date.today().isoformat()
+    plan_with_meta = {
+        "generated_at": today,
+        "source": "claude",
+        **plan,
+    }
+    await save_plan(plan_with_meta, source="claude")
+    _WORKOUT_CACHE[today] = plan_with_meta
+
+    # Log the LLM call for telemetry.
+    try:
+        await _log_llm_call(
+            request_id=f"workout-{today}",
+            model="claude-opus-4-7",
+            route_reason="workout_generate",
+            usage=response.usage,
+        )
+    except Exception:
+        pass
+
+    return plan_with_meta
+
+
+@router.get("/workout/context")
+async def workout_context() -> dict:
+    """Return the full training context string used to generate workout plans.
+
+    Call this from the Claude chat interface before generating a plan.
+    """
+    conn = get_read_conn()
+    try:
+        context = build_training_context(conn)
+    finally:
+        conn.close()
+    return {"context": context}
+
+
+@router.post("/workout/plan")
+async def submit_workout_plan(body: WorkoutPlanSubmission) -> dict:
+    """Accept a Claude-generated workout plan, validate it, persist it, and
+    optionally push it to Hevy as a routine.
+
+    This endpoint is the write-path used by the Claude chat interface.
+    """
+    try:
+        validate_plan(body.plan)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    today = date.today().isoformat()
+    plan_with_meta = {"generated_at": today, "source": body.source, **body.plan}
+
+    await save_plan(plan_with_meta, source=body.source)
+    _WORKOUT_CACHE[today] = plan_with_meta
+
+    hevy_result = None
+    if body.push_to_hevy:
+        from shc.ingest.hevy import push_routine
+        hevy_result = await push_routine(plan_with_meta)
+
+    return {"status": "ok", "date": today, "hevy": hevy_result}
+
+
+@router.delete("/workout/plan")
+async def delete_workout_plan(target_date: str | None = Query(default=None)) -> dict:
+    """Delete a stored workout plan (defaults to today). Used to discard test/bad plans."""
+    d = target_date or date.today().isoformat()
+    async with write_ctx() as conn:
+        conn.execute("DELETE FROM workout_plans WHERE date = $d", {"d": d})
+    _WORKOUT_CACHE.pop(d, None)
+    return {"status": "ok", "date": d}
 
 
 @router.get("/workout/next")
 async def workout_next(regen: bool = Query(default=False)) -> dict:
-    """AI-generated next workout plan using today's biometrics, training history, and clinical context."""
+    """Return today's workout plan.
+
+    Priority order:
+    1. In-memory cache (fast path, same process lifetime)
+    2. DB-persisted plan for today (survives restarts)
+    3. Fallback stub (instructs user to generate via chat)
+    """
     today = date.today().isoformat()
 
     if not regen and today in _WORKOUT_CACHE:
         return _WORKOUT_CACHE[today]
 
+    stored = load_plan(today)
+    if stored and not regen:
+        _WORKOUT_CACHE[today] = stored
+        return stored
+
+    # No plan yet — return a stub that prompts the user to generate via chat
     conn = get_read_conn()
     try:
         rec = conn.execute(
@@ -1083,16 +1612,9 @@ async def workout_next(regen: bool = Query(default=False)) -> dict:
             FROM workout_sets ws
             JOIN workouts w ON w.id = ws.workout_id
             WHERE ws.is_warmup = FALSE AND w.started_at::DATE >= $since
-            GROUP BY day, ws.exercise
-            ORDER BY day DESC
+            GROUP BY day, ws.exercise ORDER BY day DESC
             """,
             {"since": (date.today() - timedelta(days=14)).isoformat()},
-        ).fetchall()
-        ww_rows = conn.execute(
-            "SELECT exercise, weight_kg FROM working_weights ORDER BY updated_at DESC LIMIT 20"
-        ).fetchall()
-        pref_rows = conn.execute(
-            "SELECT exercise, status, notes FROM exercise_preferences WHERE status IN ('no', 'sub')"
         ).fetchall()
         scores_7 = conn.execute(
             "SELECT AVG(score) FROM recovery WHERE date >= $s",
@@ -1120,82 +1642,12 @@ async def workout_next(regen: bool = Query(default=False)) -> dict:
         g = _muscle_group(row[1])
         if g not in group_last_day or row[0] > date.fromisoformat(str(group_last_day[g])):
             group_last_day[g] = str(row[0])
+    days_since: dict[str, int] = {
+        g: (date.today() - date.fromisoformat(last)).days
+        for g, last in group_last_day.items()
+    }
 
-    days_since: dict[str, int] = {}
-    for g, last in group_last_day.items():
-        days_since[g] = (date.today() - date.fromisoformat(last)).days
-
-    ww_lines = "\n".join(f"• {r[0]}: {round(r[1] * 2.20462, 1)} lbs" for r in ww_rows) if ww_rows else "No data — prescribe conservative starting weights"
-    excl_lines = "\n".join(f"• {r[0]} ({r[1]})" for r in pref_rows) if pref_rows else "None"
-
-    hrv_line = (
-        f"{hrv_today:.1f}ms (baseline {hrv_avg:.1f}ms, σ {hrv_sigma:+.2f})"
-        if (hrv_today and hrv_avg and hrv_sigma is not None) else "no data"
-    )
-    acwr_line = (
-        f"{acwr} (acute {acwr_acute:.0f} / chronic {acwr_chronic:.0f})"
-        if (acwr and acwr_acute and acwr_chronic) else "insufficient data"
-    )
-    mg_lines = "\n".join(f"• {g}: {d} days" for g, d in sorted(days_since.items(), key=lambda x: -x[1]))
-    for g_name in ("legs", "push", "pull"):
-        if g_name not in days_since:
-            mg_lines += f"\n• {g_name}: not trained in past 14d"
-
-    user_context = f"""TODAY: {today}
-
-BIOMETRICS:
-• Recovery score: {rec_score if rec_score is not None else 'no data'}
-• HRV: {hrv_line}
-• Sleep last night: {sleep_hours}h
-• ACWR proxy: {acwr_line}
-
-MUSCLE GROUP REST STATUS:
-{mg_lines}
-
-WORKING WEIGHTS:
-{ww_lines}
-
-EXERCISES TO AVOID/SUBSTITUTE:
-{excl_lines}
-"""
-
-    from openai import AsyncOpenAI
-
-    model = settings.ollama_model
-    client = AsyncOpenAI(base_url=f"{settings.ollama_base_url}/v1", api_key="ollama", timeout=300.0)
-    request_id = str(uuid.uuid4())
-
-    try:
-        response = await client.chat.completions.create(
-            model=model,
-            max_tokens=2048,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_context},
-            ],
-        )
-        content = (response.choices[0].message.content or "").strip()
-        if not content:
-            log.warning("workout_next: empty response from model")
-            return _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today)
-
-        plan = json.loads(content)
-        if not isinstance(plan.get("blocks"), list) or not plan["blocks"]:
-            log.warning("workout_next: model returned plan without blocks, falling back")
-            return _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today)
-        # Normalise blocks: ensure exercises is always a list
-        for block in plan["blocks"]:
-            if not isinstance(block.get("exercises"), list):
-                block["exercises"] = []
-        await _log_llm_call(request_id=request_id, model=model, route_reason="workout_next", usage=response.usage)
-        result = {"generated_at": today, "source": "claude", **plan}
-        _WORKOUT_CACHE[today] = result
-        return result
-
-    except Exception as exc:
-        log.error("workout_next LLM call failed: %s", exc)
-        return _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today)
+    return _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today)
 
 
 async def _log_llm_call(*, request_id: str, model: str, route_reason: str, usage) -> None:
@@ -1212,6 +1664,43 @@ async def _log_llm_call(*, request_id: str, model: str, route_reason: str, usage
         log.warning("Failed to log LLM call: %s", exc)
 
 
+def _select_exercises_for_focus(focus_group: str, n: int) -> list[tuple[str, float]]:
+    """Pick `n` real exercises from working_weights for the given muscle group,
+    prioritizing recently-performed compound movements. Returns (name, weight_kg).
+    """
+    conn = get_read_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT ww.exercise, ww.weight_kg, MAX(w.started_at::DATE) AS last_day, COUNT(*) AS sessions
+            FROM working_weights ww
+            JOIN workout_sets ws ON ws.exercise = ww.exercise
+            JOIN workouts w ON w.id = ws.workout_id
+            WHERE w.started_at::DATE >= (current_date - INTERVAL '120 days')
+              AND ws.is_warmup = FALSE
+            GROUP BY ww.exercise, ww.weight_kg
+            ORDER BY last_day DESC, sessions DESC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    picked: list[tuple[str, float]] = []
+    seen_keys: set[str] = set()
+    for ex, wkg, _last, _n in rows:
+        if _muscle_group(ex) != focus_group:
+            continue
+        # de-dup near-identical movement variants ("Bicep Curl (Cable)" vs "Cable Bicep Curl")
+        key = "".join(c for c in ex.lower() if c.isalpha())[:14]
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        picked.append((ex, float(wkg)))
+        if len(picked) >= n:
+            break
+    return picked
+
+
 def _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today) -> dict:
     tier = "green"
     if rec_score is not None:
@@ -1220,19 +1709,382 @@ def _fallback_plan(rec_score, days_since, hrv_sigma, acwr, sleep_hours, today) -
         elif rec_score < 67:
             tier = "yellow"
     most_rested = max(days_since.items(), key=lambda x: x[1]) if days_since else ("legs", 3)
-    focus_map = {"legs": "Lower Body — Strength", "push": "Upper Body Push", "pull": "Upper Body Pull", "other": "Full Body", "core": "Full Body"}
-    focus = focus_map.get(most_rested[0], "Full Body")
+    focus_group = most_rested[0]
+    focus_map = {
+        "legs": "Lower Body — Strength",
+        "push": "Upper Body Push",
+        "pull": "Upper Body Pull",
+        "other": "Full Body",
+        "core": "Full Body",
+    }
+    focus = focus_map.get(focus_group, "Full Body")
     intensity = "high" if tier == "green" else ("moderate" if tier == "yellow" else "low")
     rpe = 8.0 if tier == "green" else (6.5 if tier == "yellow" else 5.0)
+
+    # Per-tier prescription: red = strict deload, yellow = moderate, green = working set %.
+    weight_pct = 1.00 if tier == "green" else (0.85 if tier == "yellow" else 0.65)
+    sets, reps_str = (4, "5") if tier == "green" else ((3, "8") if tier == "yellow" else (2, "10"))
+    accessory_sets = sets - 1 if sets > 2 else sets
+
+    primary = _select_exercises_for_focus(focus_group, 2)
+    accessories = _select_exercises_for_focus(focus_group, 5)[2:5]  # different from primary
+
+    def to_exercise(name: str, wkg: float, ssets: int, sreps: str, srpe: float, note: str) -> dict:
+        scaled_lbs = round(wkg * weight_pct * 2.20462 / 5) * 5  # round to nearest 5 lbs
+        return {
+            "name": name,
+            "sets": ssets,
+            "reps": sreps,
+            "weight_lbs": scaled_lbs if scaled_lbs > 0 else None,
+            "rpe_target": srpe,
+            "notes": note,
+        }
+
+    blocks: list[dict] = []
+    if primary:
+        blocks.append({
+            "label": "Primary — Compound",
+            "exercises": [
+                to_exercise(
+                    name, wkg, sets, reps_str, rpe,
+                    f"~{int(weight_pct*100)}% of working weight ({round(wkg * 2.20462)} lbs)" if tier != "green" else "Working weight",
+                )
+                for name, wkg in primary
+            ],
+        })
+    if accessories:
+        blocks.append({
+            "label": "Accessory",
+            "exercises": [
+                to_exercise(
+                    name, wkg, accessory_sets, "10–12" if tier != "red" else "12–15", max(5.0, rpe - 1),
+                    "Slow eccentric, full ROM",
+                )
+                for name, wkg in accessories
+            ],
+        })
+    if not blocks:
+        # Cold-start guard: no working weights yet for this group.
+        blocks = [{
+            "label": "Primary",
+            "exercises": [{
+                "name": f"{focus} compound (your choice)",
+                "sets": sets,
+                "reps": reps_str,
+                "rpe_target": rpe,
+                "notes": "No working weight on file for this group yet — pick a movement and log a set.",
+            }],
+        }]
+
+    # ── Conditioning / metabolic finisher (fat-loss layer) ──
+    # Avoids high-impact options because of forefoot overload + gait asymmetry.
+    if tier == "green":
+        blocks.append({
+            "label": "Metabolic Finisher",
+            "exercises": [
+                {
+                    "name": "Kettlebell Swing",
+                    "sets": 5,
+                    "reps": "20",
+                    "weight_lbs": 53,
+                    "rpe_target": 8.0,
+                    "notes": "EMOM 5 min, 60s rest. Drive with hips.",
+                },
+                {
+                    "name": "Sled Push",
+                    "sets": 4,
+                    "reps": "20m",
+                    "rpe_target": 8.0,
+                    "notes": "Heavy. Walk back. ~6 min.",
+                },
+            ],
+        })
+    elif tier == "yellow":
+        blocks.append({
+            "label": "Conditioning · Z2/Z3",
+            "exercises": [
+                {
+                    "name": "Bike (upright or recumbent)",
+                    "sets": 1,
+                    "reps": "10 min",
+                    "rpe_target": 6.0,
+                    "notes": "Steady tempo. HR ~130–145 if not on propranolol.",
+                },
+            ],
+        })
+    else:  # red
+        blocks.append({
+            "label": "Active Recovery · Zone 2",
+            "exercises": [
+                {
+                    "name": "Walk or easy bike",
+                    "sets": 1,
+                    "reps": "20 min",
+                    "rpe_target": 3.0,
+                    "notes": "Conversational pace. Builds aerobic base without taxing recovery.",
+                },
+            ],
+        })
+
+    rationale = (
+        f"{focus_group.capitalize()} last trained {most_rested[1]} days ago — most recovered."
+        if days_since
+        else "No recent training history — full body recommended."
+    )
+    if tier == "red":
+        rationale += " Recovery low → working at 65% to preserve adaptation without taxing the system."
+    elif tier == "yellow":
+        rationale += " Moderate effort, 85% of working weights."
+
     return {
         "generated_at": today,
         "source": "fallback",
         "readiness_tier": tier,
-        "readiness_summary": (f"Recovery score {rec_score:.0f}." if rec_score else "No recovery data.") + (f" HRV {hrv_sigma:+.1f}σ from baseline." if hrv_sigma else "") + (f" Sleep {sleep_hours}h." if sleep_hours else ""),
-        "recommendation": {"intensity": intensity, "focus": focus, "rationale": f"{most_rested[0].capitalize()} last trained {most_rested[1]} days ago — most recovered.", "estimated_duration_min": 55, "target_rpe": rpe},
-        "warmup": [{"name": "Joint circles (neck → ankles)", "duration_sec": 120}, {"name": "Bodyweight squats", "sets": 2, "reps": 15, "notes": "Focus on depth"}],
-        "blocks": [{"label": "Primary — Compound", "exercises": [{"name": "Work primary compound", "sets": 4, "reps": "5", "rpe_target": rpe, "notes": "Add Anthropic API key for exercise-specific prescription"}]}],
+        "readiness_summary": (
+            (f"Recovery score {rec_score:.0f}." if rec_score else "No recovery data.")
+            + (f" HRV {hrv_sigma:+.1f}σ from baseline." if hrv_sigma else "")
+            + (f" Sleep {sleep_hours}h." if sleep_hours else "")
+        ),
+        "recommendation": {
+            "intensity": intensity,
+            "focus": focus,
+            "rationale": rationale,
+            "estimated_duration_min": 55 if tier != "red" else 35,
+            "target_rpe": rpe,
+        },
+        "warmup": [
+            {"name": "Joint circles (neck → ankles)", "duration_sec": 120},
+            {"name": "Bodyweight squats", "sets": 2, "reps": 15, "notes": "Focus on depth"},
+            {"name": f"{focus_group.capitalize()}-specific activation", "sets": 2, "reps": 12, "notes": "50% of working weight"},
+        ],
+        "blocks": blocks,
         "cooldown": "5 min mobility — target trained muscle groups",
-        "clinical_notes": ["Propranolol (PRN): if taken today, use RPE not HR — beta blockers blunt heart rate", "Asthma: use Alvesco before session; monitor for wheeze at high intensity"],
-        "vault_insights": ["ACWR 0.8–1.3 minimizes injury risk (Gabbett, 2016) — current: " + (f"{acwr:.2f}" if acwr else "unknown"), "HRV-guided training outperforms fixed-load programs (Kiviniemi et al.)"],
+        "clinical_notes": [
+            "Propranolol (PRN): if taken today, use RPE not HR — beta blockers blunt heart rate",
+            "Asthma: use Alvesco before session; monitor for wheeze at high intensity",
+        ],
+        "vault_insights": [
+            "ACWR 0.8–1.3 minimizes injury risk (Gabbett, 2016) — current: " + (f"{acwr:.2f}" if acwr else "unknown"),
+            "HRV-guided training outperforms fixed-load programs (Kiviniemi et al.)",
+            f"{int(weight_pct*100)}% of working weight at {sets}×{reps_str} matches DUP {tier} day prescription.",
+        ],
     }
+
+
+# ── Briefing ──────────────────────────────────────────────────────────────────
+
+@router.get("/briefing/context")
+async def briefing_context() -> dict:
+    """Return today's health snapshot for use when generating the daily briefing."""
+    conn = get_read_conn()
+    try:
+        context = build_daily_context(conn)
+    finally:
+        conn.close()
+    return {"context": context}
+
+
+@router.post("/briefing")
+async def submit_briefing(body: BriefingSubmission) -> dict:
+    """Accept a Claude-generated daily briefing and persist it."""
+    valid_calls = {"Push", "Train", "Maintain", "Easy", "Rest"}
+    if body.training_call not in valid_calls:
+        raise HTTPException(status_code=422, detail=f"training_call must be one of {valid_calls}")
+    await store_briefing(body.model_dump())
+    return {"status": "ok"}
+
+
+# ── Lift progression ──────────────────────────────────────────────────────────
+
+@router.get("/training/progression")
+async def lift_progression(
+    exercise: str = Query(..., description="Exercise name (partial match ok)"),
+    sessions: int = Query(default=20, gt=0, le=100),
+) -> dict:
+    """Return per-session weight/volume history for a specific exercise."""
+    conn = get_read_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                w.started_at::DATE AS day,
+                ws.exercise,
+                COUNT(*) FILTER (WHERE NOT ws.is_warmup) AS work_sets,
+                MAX(ws.weight_kg) FILTER (WHERE NOT ws.is_warmup) AS max_kg,
+                SUM(ws.reps) FILTER (WHERE NOT ws.is_warmup) AS total_reps,
+                SUM(ws.weight_kg * ws.reps) FILTER (WHERE NOT ws.is_warmup) AS volume_kg,
+                AVG(ws.rpe) FILTER (WHERE NOT ws.is_warmup AND ws.rpe IS NOT NULL) AS avg_rpe
+            FROM workout_sets ws
+            JOIN workouts w ON w.id = ws.workout_id
+            WHERE LOWER(ws.exercise) LIKE $pat
+            GROUP BY day, ws.exercise
+            ORDER BY day DESC
+            LIMIT $n
+            """,
+            {"pat": f"%{exercise.lower()}%", "n": sessions},
+        ).fetchall()
+    finally:
+        conn.close()
+
+    history = [
+        {
+            "date": str(r[0]),
+            "exercise": r[1],
+            "work_sets": r[2],
+            "max_lbs": round(r[3] * 2.20462, 1) if r[3] else None,
+            "max_kg": round(r[3], 2) if r[3] else None,
+            "total_reps": r[4],
+            "volume_kg": round(r[5], 1) if r[5] else None,
+            "avg_rpe": round(r[6], 1) if r[6] else None,
+        }
+        for r in rows
+    ]
+
+    # Progression signal: compare last 3 vs prior 3 max weights
+    weights = [h["max_kg"] for h in history if h["max_kg"]]
+    signal = None
+    if len(weights) >= 6:
+        recent = sum(weights[:3]) / 3
+        prior = sum(weights[3:6]) / 3
+        pct = (recent - prior) / prior * 100 if prior > 0 else 0
+        signal = "progressing" if pct > 2 else ("stalled" if pct > -2 else "regressing")
+
+    return {"exercise": exercise, "history": history, "progression_signal": signal}
+
+
+@router.get("/training/stalls")
+async def lift_stalls(min_sessions: int = Query(default=4, ge=2, le=20)) -> list[dict]:
+    """Return exercises with no meaningful weight increase over the last N sessions."""
+    conn = get_read_conn()
+    try:
+        # Get last N sessions per exercise with their max weight
+        rows = conn.execute(
+            """
+            WITH ranked AS (
+                SELECT
+                    ws.exercise,
+                    w.started_at::DATE AS day,
+                    MAX(ws.weight_kg) AS max_kg,
+                    ROW_NUMBER() OVER (PARTITION BY ws.exercise ORDER BY w.started_at DESC) AS rn,
+                    COUNT(*) OVER (PARTITION BY ws.exercise) AS total_sessions
+                FROM workout_sets ws
+                JOIN workouts w ON w.id = ws.workout_id
+                WHERE ws.is_warmup = FALSE AND ws.weight_kg IS NOT NULL AND ws.weight_kg > 0
+                GROUP BY ws.exercise, day, w.started_at
+            )
+            SELECT exercise, max_kg, rn, total_sessions
+            FROM ranked
+            WHERE rn <= $n AND total_sessions >= $n
+            ORDER BY exercise, rn
+            """,
+            {"n": min_sessions},
+        ).fetchall()
+    finally:
+        conn.close()
+
+    # Group by exercise and check for stall
+    from itertools import groupby
+    stalls = []
+    for exercise, group in groupby(rows, key=lambda r: r[0]):
+        sessions = list(group)
+        weights = [r[1] for r in sessions if r[1]]
+        total = sessions[0][3] if sessions else 0
+        if len(weights) < min_sessions:
+            continue
+        mn, mx = min(weights), max(weights)
+        variation = (mx - mn) / mn if mn > 0 else 0
+        if variation < 0.02:  # < 2% change = stalled
+            stalls.append({
+                "exercise": exercise,
+                "min_kg": round(mn, 2),
+                "max_kg": round(mx, 2),
+                "min_lbs": round(mn * 2.20462, 1),
+                "max_lbs": round(mx * 2.20462, 1),
+                "sessions_checked": min_sessions,
+                "total_sessions_on_record": total,
+            })
+
+    stalls.sort(key=lambda x: -x["total_sessions_on_record"])
+    return stalls
+
+
+# ── Workout retrospective ─────────────────────────────────────────────────────
+
+@router.get("/workout/recent")
+async def recent_workouts(limit: int = Query(default=10, gt=0, le=50)) -> list[dict]:
+    """Return recent workouts with their exercise summary — for retrospective generation."""
+    conn = get_read_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                w.id,
+                w.started_at,
+                w.ended_at,
+                w.notes,
+                STRING_AGG(DISTINCT ws.exercise, ', ') AS exercises,
+                COUNT(*) FILTER (WHERE NOT ws.is_warmup) AS work_sets,
+                MAX(ws.weight_kg) AS max_weight_kg,
+                SUM(ws.weight_kg * ws.reps) FILTER (WHERE NOT ws.is_warmup) AS volume_kg,
+                AVG(ws.rpe) FILTER (WHERE ws.rpe IS NOT NULL) AS avg_rpe
+            FROM workouts w
+            JOIN workout_sets ws ON ws.workout_id = w.id
+            GROUP BY w.id, w.started_at, w.ended_at, w.notes
+            ORDER BY w.started_at DESC
+            LIMIT $n
+            """,
+            {"n": limit},
+        ).fetchall()
+        # Fetch which ones already have a retrospective
+        retro_ids = {
+            r[0]
+            for r in conn.execute("SELECT workout_id FROM workout_retrospectives").fetchall()
+        }
+    finally:
+        conn.close()
+
+    return [
+        {
+            "id": r[0],
+            "started_at": str(r[1]),
+            "ended_at": str(r[2]) if r[2] else None,
+            "notes": r[3],
+            "exercises": r[4],
+            "work_sets": r[5],
+            "volume_kg": round(r[7], 1) if r[7] else None,
+            "volume_lbs": round(r[7] * 2.20462, 1) if r[7] else None,
+            "avg_rpe": round(r[8], 1) if r[8] else None,
+            "has_retrospective": r[0] in retro_ids,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/workout/retrospective")
+async def submit_retrospective(body: RetrospectiveSubmission) -> dict:
+    """Store a Claude-generated workout retrospective."""
+    async with write_ctx() as conn:
+        conn.execute(
+            """
+            INSERT INTO workout_retrospectives
+                (workout_id, generated_at, summary, progressive_overload_achieved,
+                 rpe_vs_target, flags, vault_insights)
+            VALUES ($wid, now(), $summary, $po, $rpe, $flags, $vi)
+            ON CONFLICT (workout_id) DO UPDATE SET
+                generated_at = excluded.generated_at,
+                summary = excluded.summary,
+                progressive_overload_achieved = excluded.progressive_overload_achieved,
+                rpe_vs_target = excluded.rpe_vs_target,
+                flags = excluded.flags,
+                vault_insights = excluded.vault_insights
+            """,
+            {
+                "wid": body.workout_id,
+                "summary": body.summary,
+                "po": body.progressive_overload_achieved,
+                "rpe": body.rpe_vs_target,
+                "flags": json.dumps(body.flags),
+                "vi": json.dumps(body.vault_insights),
+            },
+        )
+    return {"status": "ok", "workout_id": body.workout_id}

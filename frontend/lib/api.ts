@@ -11,7 +11,9 @@ export interface RecoveryToday {
   score: number;
   hrv: number;
   rhr: number;
-  skin_temp: number;
+  skin_temp: number | null;
+  skin_temp_baseline_28d?: number | null;
+  skin_temp_delta?: number | null;
 }
 
 export interface RecoveryPoint {
@@ -114,7 +116,47 @@ export interface PR {
   exercise: string;
   pr_lbs: number;
   pr_kg: number;
+  pr_reps: number;
+  pr_date: string;
+  est_1rm_lbs: number;
+  est_1rm_kg: number;
   last_performed: string;
+}
+
+export interface CardioSession {
+  id: string;
+  date: string;
+  started_at: string | null;
+  kind: string;
+  strain: number | null;
+  avg_hr: number | null;
+  max_hr: number | null;
+  kcal: number | null;
+  duration_min: number | null;
+  source: string;
+  rpe?: number | null;
+}
+
+export interface CardioRecent {
+  days: number;
+  sessions: CardioSession[];
+  summary_28d: {
+    kind: string;
+    sessions: number;
+    minutes: number;
+    kcal: number;
+    strain: number;
+  }[];
+}
+
+export interface ExerciseLast {
+  found: boolean;
+  exercise: string;
+  date?: string;
+  weight_lbs?: number;
+  weight_kg?: number;
+  reps?: number;
+  rpe?: number | null;
 }
 
 export interface Correlation {
@@ -258,6 +300,101 @@ export const api = {
   briefing: () => get<Briefing | Record<string, never>>("/api/briefing"),
   workoutNext: (regen = false) =>
     get<WorkoutPlan>(`/api/workout/next${regen ? "?regen=true" : ""}`),
+  workoutGenerate: async () => {
+    const r = await fetch(`${BASE}/api/workout/generate`, { method: "POST" });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.detail || `workoutGenerate ${r.status}`);
+    }
+    return r.json() as Promise<WorkoutPlan>;
+  },
+  workoutContext: () => get<{ context: string }>("/api/workout/context"),
+  workoutSubmit: async (plan: object) => {
+    const r = await fetch(`${BASE}/api/workout/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan, source: "claude", push_to_hevy: false }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.detail || `workoutSubmit ${r.status}`);
+    }
+    return r.json();
+  },
+  workoutDelete: async () => {
+    const r = await fetch(`${BASE}/api/workout/plan`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`workoutDelete ${r.status}`);
+    return r.json() as Promise<{ status: string; date: string }>;
+  },
+  hevyPushRoutine: async (regen = false) => {
+    const r = await fetch(
+      `${BASE}/api/hevy/push-routine${regen ? "?regen=true" : ""}`,
+      { method: "POST" },
+    );
+    if (!r.ok) throw new Error(`hevyPushRoutine ${r.status}`);
+    return r.json() as Promise<{
+      ok: boolean;
+      routine_id: string;
+      plan_readiness_tier: string;
+      plan_focus: string;
+    }>;
+  },
+  trainingMuscleBalance: (weeks = 4) =>
+    get<{
+      weeks: number;
+      total_sets: number;
+      groups: {
+        group: string;
+        sets: number;
+        volume_kg: number;
+        share_pct: number;
+        weekly_sets: number;
+      }[];
+    }>(`/api/training/muscle-balance?weeks=${weeks}`),
+  cardioRecent: (days = 60) => get<CardioRecent>(`/api/cardio/recent?days=${days}`),
+  cardioLog: async (body: {
+    date?: string;
+    modality: string;
+    duration_min: number;
+    avg_hr?: number | null;
+    rpe?: number | null;
+    notes?: string | null;
+  }) => {
+    const r = await fetch(`${BASE}/api/cardio/log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`cardioLog ${r.status}`);
+    return r.json() as Promise<{ status: string; id: string; date: string }>;
+  },
+  cardioDelete: async (id: string) => {
+    const r = await fetch(`${BASE}/api/cardio/log/${id}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`cardioDelete ${r.status}`);
+    return r.json();
+  },
+  trainingExerciseLast: (exercise: string) =>
+    get<ExerciseLast>(
+      `/api/training/exercise-last?exercise=${encodeURIComponent(exercise)}`,
+    ),
+  trainingProgression: (exercise: string, sessions = 20) =>
+    get<{
+      exercise: string;
+      history: {
+        date: string;
+        exercise: string;
+        work_sets: number;
+        max_lbs: number;
+        max_kg: number;
+        total_reps: number;
+        volume_kg: number;
+        avg_rpe: number | null;
+      }[];
+    }>(
+      `/api/training/progression?exercise=${encodeURIComponent(
+        exercise,
+      )}&sessions=${sessions}`,
+    ),
 };
 
 export async function* streamChat(messages: ChatMessage[]): AsyncGenerator<string> {

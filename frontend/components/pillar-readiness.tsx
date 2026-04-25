@@ -2,40 +2,19 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Line, LineChart, ResponsiveContainer, ReferenceLine, Tooltip } from "recharts";
-import { api, type RecoveryPoint, type StatsSummary, type ReadinessToday } from "@/lib/api";
+import { api } from "@/lib/api";
 import { Eyebrow, Metric, DeltaPill } from "@/components/ui/metric";
-
-function computeReadiness(
-  r: ReadinessToday | undefined,
-  s: StatsSummary | undefined,
-  rec: RecoveryPoint | undefined,
-): number | null {
-  if (!r || !s || !rec) return null;
-  const hrvToday = s.hrv.today ?? r.hrv;
-  const hrvBase = s.hrv.baseline_28d;
-  const rhrBase = s.rhr.baseline_28d;
-  const hrvScore =
-    hrvToday && hrvBase ? Math.max(0, Math.min(100, 50 + ((hrvToday - hrvBase) / hrvBase) * 300)) : 50;
-  const sleepScore = r.sleep_hours ? Math.max(0, Math.min(100, (r.sleep_hours / 8) * 100)) : 50;
-  const rhrScore = rhrBase && r.rhr ? Math.max(0, Math.min(100, 100 - ((r.rhr - rhrBase) / rhrBase) * 400)) : 50;
-  const subj = r.energy != null ? r.energy * 10 : 70;
-  return 0.4 * hrvScore + 0.3 * sleepScore + 0.2 * rhrScore + 0.1 * subj;
-}
-
-function tone(score: number | null): "positive" | "neutral" | "negative" {
-  if (score == null) return "neutral";
-  if (score >= 67) return "positive";
-  if (score >= 34) return "neutral";
-  return "negative";
-}
+import { computeReadiness, readinessTone, weightLabel } from "@/lib/readiness";
 
 export function PillarReadiness() {
   const readiness = useQuery({ queryKey: ["readiness"], queryFn: api.readinessToday });
   const stats = useQuery({ queryKey: ["stats-summary"], queryFn: api.statsSummary });
   const trend = useQuery({ queryKey: ["recovery-trend-14"], queryFn: () => api.recoveryTrend(14) });
+  const clinical = useQuery({ queryKey: ["clinical-overview"], queryFn: api.clinicalOverview });
 
-  const current = computeReadiness(readiness.data, stats.data, trend.data?.at(-1));
-  const t = tone(current);
+  const result = computeReadiness(readiness.data, stats.data, clinical.data);
+  const current = result.score;
+  const t = readinessTone(current);
 
   const points =
     trend.data?.map((p, i) => ({
@@ -47,8 +26,12 @@ export function PillarReadiness() {
 
   const weekAgo = points.slice(-14, -7);
   const thisWeek = points.slice(-7);
-  const weekAvg = weekAgo.length ? weekAgo.reduce((a, p) => a + p.score, 0) / weekAgo.length : 0;
-  const thisAvg = thisWeek.length ? thisWeek.reduce((a, p) => a + p.score, 0) / thisWeek.length : 0;
+  const weekAvg = weekAgo.length
+    ? weekAgo.reduce((a, p) => a + (p.score ?? 0), 0) / weekAgo.length
+    : 0;
+  const thisAvg = thisWeek.length
+    ? thisWeek.reduce((a, p) => a + (p.score ?? 0), 0) / thisWeek.length
+    : 0;
   const wow = thisAvg - weekAvg;
 
   const slope = stats.data?.recovery_trend_slope_7d ?? 0;
@@ -58,9 +41,24 @@ export function PillarReadiness() {
 
   return (
     <div className="shc-card shc-enter p-5 min-h-[320px] flex flex-col">
-      <div className="flex items-baseline justify-between">
-        <Eyebrow>Readiness · composite</Eyebrow>
-        <span className="text-[10.5px] text-[var(--text-dim)]">HRV 40 · Sleep 30 · RHR 20 · Subj 10</span>
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Eyebrow>Readiness · composite</Eyebrow>
+          {result.betaBlocker && (
+            <span
+              className="text-[8.5px] font-medium uppercase tracking-wider px-1.5 py-px rounded-sm"
+              style={{
+                color: "var(--neutral)",
+                background: "var(--neutral-soft)",
+                border: "1px solid oklch(0.75 0.18 75 / 0.25)",
+              }}
+              title="HRV signal blunted by beta-blocker; weights re-balanced"
+            >
+              β-adj
+            </span>
+          )}
+        </div>
+        <span className="text-[10.5px] text-[var(--text-dim)] tabular-nums">{weightLabel(result.weights)}</span>
       </div>
 
       <div className="flex items-baseline gap-3 mt-3">
