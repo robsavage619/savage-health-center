@@ -13,14 +13,6 @@ type PushState =
   | { kind: "ok"; routineId: string; focus: string }
   | { kind: "err"; msg: string };
 
-type SyncState =
-  | { kind: "idle" }
-  | { kind: "syncing" }
-  | { kind: "ok" }
-  | { kind: "err"; msg: string };
-
-const CLAUDE_CODE_PROMPT = `Read the live training context at GET http://127.0.0.1:8000/api/workout/context, then generate today's workout plan as a single JSON object. Optimize for two simultaneous goals: get stronger and burn fat (body recomposition). Use real exercise names and weights from Rob's history. Apply the GREEN/YELLOW/RED intensity matrix based on his recovery score. Always include a metabolic finisher (or Z2 walk on red days). Then POST the resulting plan to http://127.0.0.1:8000/api/workout/plan with body { "plan": <plan>, "source": "claude_code", "push_to_hevy": false }. Confirm success.`;
-
 // ── Tier config ──────────────────────────────────────────────────────────────
 
 const TIER = {
@@ -389,10 +381,7 @@ export function NextWorkoutPane() {
   const queryClient = useQueryClient();
   const [regenKey, setRegenKey] = useState(0);
   const [push, setPush] = useState<PushState>({ kind: "idle" });
-  const [copied, setCopied] = useState(false);
-  const [showPrompt, setShowPrompt] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
-  const [sync, setSync] = useState<SyncState>({ kind: "idle" });
 
   const { data, isLoading, isError, isFetching } = useQuery({
     queryKey: ["workout-next", regenKey],
@@ -427,49 +416,6 @@ export function NextWorkoutPane() {
     handleRegen();
   }
 
-  function handleCopyPrompt() {
-    // Preferred path: async Clipboard API
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(CLAUDE_CODE_PROMPT).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2500);
-      }).catch(() => fallbackCopy());
-    } else {
-      fallbackCopy();
-    }
-  }
-
-  function fallbackCopy() {
-    const el = document.createElement("textarea");
-    el.value = CLAUDE_CODE_PROMPT;
-    el.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0";
-    document.body.appendChild(el);
-    el.focus();
-    el.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(el);
-    if (ok) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    } else {
-      // Both paths failed — show the text so the user can copy manually.
-      setShowPrompt(true);
-    }
-  }
-
-  async function handleSync() {
-    setSync({ kind: "syncing" });
-    try {
-      await api.syncAll();
-      // Invalidate everything so the whole dashboard refreshes.
-      await queryClient.invalidateQueries();
-      setSync({ kind: "ok" });
-      setTimeout(() => setSync({ kind: "idle" }), 3000);
-    } catch (e) {
-      setSync({ kind: "err", msg: e instanceof Error ? e.message : "sync failed" });
-      setTimeout(() => setSync({ kind: "idle" }), 4000);
-    }
-  }
 
   return (
     <div className="space-y-5">
@@ -522,41 +468,13 @@ export function NextWorkoutPane() {
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Step 1 — copy prompt for Claude Code */}
-          <button
-            onClick={handleCopyPrompt}
-            className={copied ? "btn btn-primary" : "btn btn-secondary"}
-            title="Step 1 — copy prompt, paste into Claude Code to generate today's plan"
-          >
-            <span className="btn-step">1</span>
-            {copied ? "✓ Prompt copied" : "✦ Copy CC prompt"}
-          </button>
-
-          {/* Step 2 — sync WHOOP + Hevy to refresh data */}
-          <button
-            onClick={handleSync}
-            disabled={sync.kind === "syncing"}
-            className={sync.kind === "ok" ? "btn btn-primary" : "btn btn-secondary"}
-            title="Step 2 — pull latest WHOOP + Hevy data and refresh the dashboard"
-          >
-            <span className="btn-step">2</span>
-            <span
-              className={sync.kind === "syncing" ? "animate-spin inline-block" : ""}
-              style={sync.kind === "err" ? { color: "var(--negative)" } : undefined}
-            >
-              {sync.kind === "ok" ? "✓" : sync.kind === "err" ? "✗" : "↻"}
-            </span>
-            {sync.kind === "syncing" ? "Syncing…" : sync.kind === "ok" ? "Synced" : sync.kind === "err" ? "Failed" : "Sync"}
-          </button>
-
-          {/* Step 3 — push plan to Hevy */}
+          {/* Push plan to Hevy */}
           <button
             onClick={handlePushHevy}
             disabled={push.kind === "pushing" || !data}
             className={push.kind === "ok" ? "btn btn-primary" : "btn btn-secondary"}
-            title="Step 3 — push today's plan to Hevy as a routine"
+            title="Push today's plan to Hevy as a routine"
           >
-            <span className="btn-step">3</span>
             <span className={push.kind === "pushing" ? "animate-spin inline-block" : ""}>
               {push.kind === "pushing" ? "⟳" : push.kind === "ok" ? "✓" : "→"}
             </span>
@@ -575,36 +493,6 @@ export function NextWorkoutPane() {
           </button>
         </div>
       </div>
-
-      {showPrompt && (
-        <div
-          className="rounded-[var(--r-md)] p-3 space-y-2"
-          style={{ background: "oklch(0.72 0.12 250 / 0.08)", border: "1px solid oklch(0.72 0.12 250 / 0.3)" }}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--chart-line)]">
-              Paste this into Claude Code
-            </span>
-            <button
-              onClick={() => setShowPrompt(false)}
-              className="text-[var(--text-faint)] text-[11px] hover:text-[var(--text-dim)]"
-            >
-              ✕
-            </button>
-          </div>
-          <pre
-            className="text-[11px] text-[var(--text-muted)] leading-relaxed whitespace-pre-wrap break-words select-all cursor-text font-mono"
-            onClick={(e) => {
-              const range = document.createRange();
-              range.selectNodeContents(e.currentTarget);
-              window.getSelection()?.removeAllRanges();
-              window.getSelection()?.addRange(range);
-            }}
-          >
-            {CLAUDE_CODE_PROMPT}
-          </pre>
-        </div>
-      )}
 
       {push.kind === "err" && (
         <div
