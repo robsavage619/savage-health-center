@@ -5,13 +5,23 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Eyebrow } from "@/components/ui/metric";
 
-const STORY_PROMPT = `Read the live health context from GET http://127.0.0.1:8000/api/briefing/context, then read the relevant research notes from Rob's vault at ~/Vault/savage_vault/wiki/.
+const STORY_PROMPT = `Generate Rob's daily health story AND today's workout plan in a single pass.
 
-Write a narrative health briefing — not bullets, not a dashboard. 4–6 paragraphs of clear prose addressed to Rob in second person. Lead with the most important signal of the moment, not chronology. Cite specific numbers from the live data (recovery score, HRV deviation σ, ACWR, sleep totals) but always anchor them to meaning, not just the number. Weave in vault research naturally by source name when relevant. End with one paragraph on near-term trajectory: what the next 1–2 weeks should look like.
+STEP 1 — Read context.
+- GET http://127.0.0.1:8000/api/briefing/context for live biometrics (recovery, HRV, sleep, gates).
+- GET http://127.0.0.1:8000/api/workout/context for training history.
+- Read relevant research notes from Rob's vault at ~/Vault/savage_vault/wiki/.
 
-Constraints: no "as your AI advisor I think" framing. No motivational filler. Never imply chronic propranolol use — it is PRN/occasional, reference it only if today's check-in shows it was taken. Never invent metrics not in the live context.
+STEP 2 — Write the narrative health story.
+4–6 paragraphs of clear prose addressed to Rob in second person. Lead with the most important signal of the moment, not chronology. Cite specific numbers (recovery score, HRV deviation σ, ACWR, sleep totals) but anchor them to meaning, not just the number. Weave vault research in naturally by source name where relevant. End with one paragraph on near-term trajectory: what the next 1–2 weeks should look like.
+Constraints: no "as your AI advisor" framing. No motivational filler. Never imply chronic propranolol use — it is PRN/occasional, reference only if today's check-in shows it was taken. Never invent metrics not in the live context.
+POST to http://127.0.0.1:8000/api/health-story with body { "narrative": "<text>", "sources": [<vault filenames cited>], "model": "claude-sonnet-4-6" }.
 
-POST the result to http://127.0.0.1:8000/api/health-story with body { "narrative": "<your text>", "sources": [<list of vault note filenames cited>], "model": "claude-sonnet-4-6" }. Confirm success.`;
+STEP 3 — Generate today's workout plan.
+Single JSON object. Optimize for body recomposition (strength + fat loss). Real exercise names and weights from Rob's history. Apply GREEN/YELLOW/RED intensity matrix per recovery score. Always include a metabolic finisher (or Z2 walk on red days).
+POST to http://127.0.0.1:8000/api/workout/plan with body { "plan": <plan>, "source": "claude_code", "push_to_hevy": false }.
+
+Confirm both POSTs succeeded.`;
 
 type SyncState = { kind: "idle" } | { kind: "syncing" } | { kind: "ok" } | { kind: "err"; msg: string };
 
