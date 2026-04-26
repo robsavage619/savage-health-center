@@ -1,5 +1,6 @@
 import { CommandBriefing } from "@/components/command-briefing";
 import { HealthAnalysis } from "@/components/health-analysis";
+import { HealthStory } from "@/components/health-story";
 import { PillarRecovery } from "@/components/pillar-recovery";
 import { PillarSleep } from "@/components/pillar-sleep";
 import { PillarTrainingLoad } from "@/components/pillar-training-load";
@@ -49,6 +50,10 @@ export default function Dashboard() {
         <div className="space-y-4 min-w-0">
           <ErrorBoundary label="Command briefing">
             <CommandBriefing />
+          </ErrorBoundary>
+
+          <ErrorBoundary label="Health story">
+            <HealthStory />
           </ErrorBoundary>
 
           <ErrorBoundary label="Health analysis">
