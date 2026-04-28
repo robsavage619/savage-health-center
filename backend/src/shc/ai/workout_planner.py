@@ -43,6 +43,7 @@ _KEEP_HEADINGS = {
 # Map vault tags / filename keywords → state signals they're relevant to.
 # A note's score is the count of (tag, signal) pairs that match today's state.
 _TAG_SIGNALS: dict[str, tuple[str, ...]] = {
+    # ── Recovery / load anomalies ─────────────────────────────────────────────
     "hrv": ("hrv_anomaly",),
     "recovery": ("hrv_anomaly", "deload", "illness", "poor_sleep"),
     "overreaching": ("hrv_anomaly", "deload", "high_acwr"),
@@ -52,11 +53,32 @@ _TAG_SIGNALS: dict[str, tuple[str, ...]] = {
     "deload": ("deload",),
     "illness": ("illness",),
     "sleep": ("poor_sleep",),
-    "strength": ("default",),
-    "hypertrophy": ("default",),
-    "progressive-overload": ("default",),
+    # ── Always-on: strength / recomposition goals ─────────────────────────────
+    "strength": ("default", "recomposition"),
+    "hypertrophy": ("default", "recomposition"),
+    "progressive-overload": ("default", "recomposition"),
     "frequency": ("default",),
     "fitness-fatigue": ("default",),
+    "compound-training": ("default", "recomposition"),
+    "hormonal-response": ("default", "recomposition"),
+    "recomposition": ("default", "recomposition"),
+    "fat-loss": ("recomposition",),
+    "body-composition": ("recomposition",),
+    "density": ("recomposition",),
+    "supersets": ("recomposition",),
+    "metabolic": ("recomposition",),
+    # ── Push/pull imbalance ───────────────────────────────────────────────────
+    "push-pull-balance": ("push_pull_imbalance",),
+    "muscle-balance": ("push_pull_imbalance",),
+    "corrective-exercise": ("push_pull_imbalance",),
+    "posterior-chain": ("push_pull_imbalance",),
+    "pull": ("push_pull_imbalance",),
+    # ── Volume spike / periodization ─────────────────────────────────────────
+    "volume-management": ("volume_spike",),
+    "periodization": ("default", "volume_spike"),
+    "deload-timing": ("volume_spike",),
+    "fatigue-accumulation": ("volume_spike", "high_acwr"),
+    "supercompensation": ("volume_spike",),
 }
 
 _DEFAULT_VAULT_LIMIT = 6
@@ -107,11 +129,14 @@ def _parse_frontmatter_tags(raw: str) -> list[str]:
     return [t.lower() for t in tags if t]
 
 
-def _state_signals(state: dict[str, Any] | None) -> set[str]:
+def _state_signals(
+    state: dict[str, Any] | None,
+    extra_signals: set[str] | None = None,
+) -> set[str]:
     """Derive vault-relevance signals from today's DailyState dict."""
-    signals: set[str] = {"default"}
+    signals: set[str] = {"default", "recomposition"}
     if state is None:
-        return signals
+        return signals | (extra_signals or set())
     rec = state.get("recovery") or {}
     load = state.get("training_load") or {}
     chk = state.get("checkin") or {}
@@ -128,12 +153,15 @@ def _state_signals(state: dict[str, Any] | None) -> set[str]:
     last_sleep = sleep.get("last_hours")
     if last_sleep is not None and last_sleep < 6:
         signals.add("poor_sleep")
+    if extra_signals:
+        signals |= extra_signals
     return signals
 
 
 def load_vault_research(
     state: dict[str, Any] | None = None,
     limit: int = _DEFAULT_VAULT_LIMIT,
+    extra_signals: set[str] | None = None,
 ) -> str:
     """Load vault notes ranked by relevance to today's state.
 
@@ -151,7 +179,7 @@ def load_vault_research(
         log.warning("Vault wiki dir not found at %s", wiki_dir)
         return ""
 
-    signals = _state_signals(state)
+    signals = _state_signals(state, extra_signals)
     scored: list[tuple[int, str, str]] = []  # (-score, name, formatted excerpt)
 
     for path in sorted(wiki_dir.glob("*.md")):
@@ -502,7 +530,13 @@ def build_training_context(conn) -> str:
         for ex, status, notes in prefs:
             lines.append(f"- {ex} ({status})" + (f": {notes}" if notes else ""))
 
-    vault = load_vault_research(state)
+    extra: set[str] = set()
+    ratio = load.get("push_pull_ratio_28d")
+    if ratio is not None and (ratio > 1.3 or ratio < 0.75):
+        extra.add("push_pull_imbalance")
+    if abs(vol_trend_pct) > 40:
+        extra.add("volume_spike")
+    vault = load_vault_research(state, extra_signals=extra)
     if vault:
         lines.append("\n" + vault)
 
