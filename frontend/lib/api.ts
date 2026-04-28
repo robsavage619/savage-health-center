@@ -461,7 +461,7 @@ export const api = {
   },
   syncAll: async () => {
     const [whoop, hevy] = await Promise.allSettled([
-      fetch(`${BASE}/api/whoop/sync`, { method: "POST" }).then((r) => r.json()),
+      fetch(`${BASE}/auth/whoop/sync`, { method: "POST" }).then((r) => r.json()),
       fetch(`${BASE}/api/hevy/sync`, { method: "POST" }).then((r) => r.json()),
     ]);
     return {
