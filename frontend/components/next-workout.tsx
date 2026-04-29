@@ -429,7 +429,9 @@ export function NextWorkoutPane() {
       <div className="flex items-end justify-between flex-wrap gap-3 pb-1">
         <div>
           <h2 className="text-[20px] font-semibold tracking-tight text-[var(--text-primary)] leading-none">
-            Today&apos;s Plan
+            {data && data.generated_at === new Date().toLocaleDateString("en-CA")
+              ? "Today’s Plan"
+              : "Last Plan"}
           </h2>
           {data && (
             <div className="flex items-center gap-2 mt-2">
