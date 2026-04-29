@@ -166,8 +166,8 @@ const BLOCK_ACCENT: Record<string, { bar: string; pill: string; pillBg: string }
   default: { bar: "var(--hairline-strong)", pill: "var(--text-muted)", pillBg: "oklch(1 0 0 / 0.04)" },
 };
 
-function blockAccent(label: string) {
-  const k = label.toLowerCase();
+function blockAccent(label: string | undefined) {
+  const k = (label ?? "").toLowerCase();
   if (k.includes("primary") || k.includes("compound") || k.includes("strength")) return BLOCK_ACCENT.primary;
   if (k.includes("accessory") || k.includes("hypertrophy")) return BLOCK_ACCENT.accessory;
   if (k.includes("finisher") || k.includes("metabolic")) return BLOCK_ACCENT.finisher;
