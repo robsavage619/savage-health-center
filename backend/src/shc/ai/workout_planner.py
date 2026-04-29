@@ -579,8 +579,15 @@ def validate_plan(plan: dict[str, Any], state: dict[str, Any] | None = None) -> 
     if not blocks:
         raise ValueError("Plan has no blocks")
     for i, block in enumerate(blocks):
+        if not block.get("label"):
+            raise ValueError(f"Block {i} missing required 'label' field (got 'name'?)")
         if not block.get("exercises"):
             raise ValueError(f"Block {i} ({block.get('label')!r}) has no exercises")
+        for j, ex in enumerate(block["exercises"]):
+            if not ex.get("name"):
+                raise ValueError(
+                    f"Block {i} exercise {j} missing 'name' (got 'exercise'?)"
+                )
     if not plan.get("clinical_notes"):
         raise ValueError("clinical_notes is empty — must include medication context")
     if not plan.get("vault_insights"):
