@@ -19,15 +19,26 @@ const toStringArray = (v: unknown): string[] =>
 // ── Tier config ──────────────────────────────────────────────────────────────
 
 const TIER = {
-  green: { color: "var(--positive)", soft: "var(--positive-soft)", border: "oklch(0.72 0.18 145 / 0.25)", icon: "▲", label: "Go hard" },
-  yellow: { color: "var(--neutral)", soft: "var(--neutral-soft)", border: "oklch(0.75 0.18 75 / 0.25)", icon: "◆", label: "Moderate effort" },
-  red: { color: "var(--negative)", soft: "var(--negative-soft)", border: "oklch(0.65 0.22 25 / 0.25)", icon: "▼", label: "Rest / active recovery" },
+  green: { color: "var(--positive)", soft: "var(--positive-soft)", border: "oklch(0.72 0.18 145 / 0.25)", icon: "▲" },
+  yellow: { color: "var(--neutral)", soft: "var(--neutral-soft)", border: "oklch(0.75 0.18 75 / 0.25)", icon: "◆" },
+  red: { color: "var(--negative)", soft: "var(--negative-soft)", border: "oklch(0.65 0.22 25 / 0.25)", icon: "▼" },
+} as const;
+
+// The readiness tier sets the colour (it reflects the physiological signal),
+// but the headline reflects what the prescription actually asks for today —
+// e.g. a green-readiness day where Rob already trained becomes Active Recovery.
+const INTENSITY_LABEL = {
+  high: "Go hard",
+  moderate: "Moderate effort",
+  low: "Active recovery",
+  rest: "Full rest",
 } as const;
 
 // ── Readiness banner ─────────────────────────────────────────────────────────
 
 function ReadinessBanner({ plan }: { plan: WorkoutPlan }) {
   const t = TIER[plan.readiness_tier] ?? TIER.yellow;
+  const headline = INTENSITY_LABEL[plan.recommendation.intensity] ?? "Train";
   return (
     <div
       className="rounded-[var(--r-md)] overflow-hidden"
@@ -43,7 +54,7 @@ function ReadinessBanner({ plan }: { plan: WorkoutPlan }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2 flex-wrap mb-1">
             <span className="text-[18px] font-semibold leading-none" style={{ color: t.color }}>
-              {t.label}
+              {headline}
             </span>
             <span
               className="text-[10px] font-semibold uppercase tracking-[0.18em] px-2 py-0.5 rounded-full"
