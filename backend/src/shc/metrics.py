@@ -143,6 +143,7 @@ class AutoRegGates:
     hr_zone_shift_bpm: int = 0               # subtract from prescribed HR zones (propranolol days)
     kcal_multiplier: float = 1.0             # multiply HR-derived kcal estimates
     e1rm_regression_4wk_pct: float | None = None
+    already_trained_today: bool = False      # a strength session is already logged for today
     reasons: list[str] = field(default_factory=list)
 
 
@@ -543,6 +544,16 @@ def _gates(
     if readiness.tier == "red" and g.max_intensity in ("high", "moderate"):
         g.max_intensity = "low"
         reasons.append("Readiness red — cap intensity LOW")
+
+    # Already trained today — cap to active recovery only.
+    if load.days_since_last is not None and load.days_since_last == 0:
+        g.already_trained_today = True
+        if g.max_intensity in ("high", "moderate"):
+            g.max_intensity = "low"
+        reasons.append(
+            "Strength session already logged today — prescribe Active Recovery "
+            "(Z2 walk/bike + mobility) or skip; do not stack a second session"
+        )
 
     # Muscle-group recovery.
     for grp in ("legs", "push", "pull"):

@@ -357,6 +357,11 @@ def build_training_context(conn) -> str:
     # ── Hard gates first — the LLM must respect these ──
     lines.append("## ⚠ AUTO-REGULATION GATES (HARD CONSTRAINTS)")
     lines.append(f"- Max intensity: **{gates['max_intensity'].upper()}**")
+    if gates.get("already_trained_today"):
+        lines.append(
+            "- ⚠ ALREADY TRAINED TODAY — prescribe Active Recovery (Z2 walk/bike "
+            "20–30 min + mobility) or skip; do NOT stack a second strength session"
+        )
     if gates["forbid_muscle_groups"]:
         lines.append(f"- Forbidden muscle groups: {', '.join(gates['forbid_muscle_groups'])}")
     if gates["deload_required"]:
@@ -659,6 +664,11 @@ def validate_plan(plan: dict[str, Any], state: dict[str, Any] | None = None) -> 
                             f"Exercise {ex.get('name')!r} targets {g}, which is "
                             f"forbidden today (gate: {sorted(forbid)})."
                         )
+        if gates.get("already_trained_today") and rec["intensity"] not in ("low", "rest"):
+            raise GateViolation(
+                f"Strength session already logged today but plan intensity is "
+                f"{rec['intensity']!r} — must be 'low' (active recovery) or 'rest'."
+            )
         if gates.get("deload_required"):
             # Deload weeks must use moderate-or-lower intensity AND target_rpe <= 7.
             target_rpe = rec.get("target_rpe", 10)
