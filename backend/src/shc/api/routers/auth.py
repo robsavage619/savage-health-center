@@ -33,10 +33,10 @@ async def whoop_callback(code: str, state: str) -> dict:
 async def whoop_sync() -> dict:
     """Manually trigger a WHOOP sync."""
     try:
-        await sync_all()
+        counts = await sync_all()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"status": "ok"}
+    return {"status": "ok", "counts": counts}
 
 
 @router.post("/apple/ingest")
