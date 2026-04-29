@@ -212,25 +212,39 @@ async def _upsert_workout(conn: Any, workout_row: dict, set_rows: list[dict]) ->
 
 
 async def _update_working_weights_from_hevy(conn: Any) -> None:
+    """Recompute working_weights from recent Hevy history.
+
+    Uses the 80th percentile of non-warmup sets at RPE 6–9 over the last 90
+    days, requiring ≥3 sets across ≥2 sessions, so a single anomalous set
+    (mistype, partial-range rep, unit error) cannot drive prescriptions.
+    Values are allowed to regress — no max-only ratchet.
+    """
     conn.execute("""
+        WITH ex_stats AS (
+            SELECT ws.exercise,
+                   quantile_cont(ws.weight_kg, 0.8) FILTER (
+                       WHERE ws.rpe IS NULL OR ws.rpe BETWEEN 6 AND 9
+                   ) AS p80_kg,
+                   MAX(w.started_at) AS last_at,
+                   COUNT(*) AS n_sets,
+                   COUNT(DISTINCT w.started_at::DATE) AS n_sessions
+            FROM workout_sets ws
+            JOIN workouts w ON w.id = ws.workout_id
+            WHERE ws.is_warmup = FALSE
+              AND ws.weight_kg IS NOT NULL
+              AND ws.weight_kg > 0
+              AND w.source = 'hevy'
+              AND w.started_at::DATE >= (current_date - INTERVAL 90 DAY)
+            GROUP BY ws.exercise
+        )
         INSERT INTO working_weights (exercise, weight_kg, updated_at, source)
-        SELECT
-            ws.exercise,
-            MAX(ws.weight_kg) AS weight_kg,
-            MAX(w.started_at) AS updated_at,
-            'hevy'
-        FROM workout_sets ws
-        JOIN workouts w ON w.id = ws.workout_id
-        WHERE ws.is_warmup = FALSE
-          AND ws.weight_kg IS NOT NULL
-          AND ws.weight_kg > 0
-          AND w.source = 'hevy'
-        GROUP BY ws.exercise
+        SELECT exercise, p80_kg, last_at, 'hevy'
+        FROM ex_stats
+        WHERE n_sets >= 3 AND n_sessions >= 2 AND p80_kg IS NOT NULL
         ON CONFLICT (exercise) DO UPDATE SET
             weight_kg = EXCLUDED.weight_kg,
             updated_at = EXCLUDED.updated_at,
             source = EXCLUDED.source
-        WHERE EXCLUDED.weight_kg > working_weights.weight_kg
     """)
 
 

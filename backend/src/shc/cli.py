@@ -77,10 +77,10 @@ async def _seed(days: int) -> None:
 def ingest_fitbod(csv_path: str | None) -> None:
     """Ingest Fitbod WorkoutExport.csv into workouts + workout_sets + working_weights."""
     from pathlib import Path
-    from shc.ingest.fitbod import ingest_fitbod as _ingest, _FITBOD_CSV
+    from shc.ingest.fitbod import ingest_fitbod as _ingest
 
     init_db()
-    path = Path(csv_path) if csv_path else _FITBOD_CSV
+    path = Path(csv_path) if csv_path else settings.fitbod_csv_path
     click.echo(f"Loading Fitbod data from {path} ...")
     result = _ingest(path)
     click.echo(f"Done: {result['workouts_inserted']} new sessions, {result['sets_inserted']} new sets "

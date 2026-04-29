@@ -74,6 +74,12 @@ def ingest_fitbod(csv_path: Path | None = None) -> dict[str, int]:
         for idx, row in enumerate(rows):
             try:
                 weight_kg = float(row.get("Weight(kg)", 0) or 0)
+                # Fitbod's `multiplier` is 2.0 for bilateral dumbbell exercises
+                # (Weight(kg) is stored per-hand). Multiply to get total bilateral
+                # weight, matching the Hevy storage convention.
+                multiplier = float(row.get("multiplier", 1) or 1)
+                if multiplier and multiplier != 1.0:
+                    weight_kg = weight_kg * multiplier
                 reps = int(float(row.get("Reps", 0) or 0))
                 is_warmup = row.get("isWarmup", "false").strip().lower() == "true"
                 exercise = row.get("Exercise", "").strip()
@@ -83,40 +89,51 @@ def ingest_fitbod(csv_path: Path | None = None) -> dict[str, int]:
                 set_hash = _content_hash("fitbod", date_str, exercise, str(idx))
                 set_id = f"fitbod_set_{set_hash}"
 
-                set_exists = conn.execute(
-                    "SELECT id FROM workout_sets WHERE id = ?", [set_id]
-                ).fetchone()
-                if not set_exists:
-                    conn.execute(
-                        """
-                        INSERT INTO workout_sets
-                            (id, workout_id, exercise, set_idx, reps, weight_kg, is_warmup, content_hash)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        [set_id, workout_id, exercise, idx, reps,
-                         weight_kg if weight_kg > 0 else None,
-                         is_warmup, set_hash],
-                    )
-                    sets_inserted += 1
+                conn.execute(
+                    """
+                    INSERT INTO workout_sets
+                        (id, workout_id, exercise, set_idx, reps, weight_kg, is_warmup, content_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (id) DO UPDATE SET
+                        weight_kg = EXCLUDED.weight_kg,
+                        reps = EXCLUDED.reps,
+                        is_warmup = EXCLUDED.is_warmup,
+                        content_hash = EXCLUDED.content_hash
+                    """,
+                    [set_id, workout_id, exercise, idx, reps,
+                     weight_kg if weight_kg > 0 else None,
+                     is_warmup, set_hash],
+                )
+                sets_inserted += 1
             except Exception as e:
                 log.debug("Skipping row in %s: %s", date_str, e)
 
-    # Update working_weights from most recent non-warmup max per exercise
+    # Rebuild working_weights using P80 of working sets at RPE 6–9 over the
+    # last 90d, ≥3 sets across ≥2 sessions — same logic as the Hevy path so
+    # both sources produce consistent prescriptions.
     log.info("Rebuilding working_weights...")
     conn.execute("""
+        WITH ex_stats AS (
+            SELECT ws.exercise,
+                   quantile_cont(ws.weight_kg, 0.8) FILTER (
+                       WHERE ws.rpe IS NULL OR ws.rpe BETWEEN 6 AND 9
+                   ) AS p80_kg,
+                   MAX(w.started_at) AS last_at,
+                   COUNT(*) AS n_sets,
+                   COUNT(DISTINCT w.started_at::DATE) AS n_sessions
+            FROM workout_sets ws
+            JOIN workouts w ON w.id = ws.workout_id
+            WHERE ws.is_warmup = FALSE
+              AND ws.weight_kg IS NOT NULL
+              AND ws.weight_kg > 0
+              AND w.source = 'fitbod'
+              AND w.started_at::DATE >= (current_date - INTERVAL 90 DAY)
+            GROUP BY ws.exercise
+        )
         INSERT INTO working_weights (exercise, weight_kg, updated_at, source)
-        SELECT
-            ws.exercise,
-            MAX(ws.weight_kg) AS weight_kg,
-            MAX(w.started_at) AS updated_at,
-            'fitbod'
-        FROM workout_sets ws
-        JOIN workouts w ON w.id = ws.workout_id
-        WHERE ws.is_warmup = FALSE
-          AND ws.weight_kg IS NOT NULL
-          AND ws.weight_kg > 0
-          AND w.source = 'fitbod'
-        GROUP BY ws.exercise
+        SELECT exercise, p80_kg, last_at, 'fitbod'
+        FROM ex_stats
+        WHERE n_sets >= 3 AND n_sessions >= 2 AND p80_kg IS NOT NULL
         ON CONFLICT (exercise) DO UPDATE SET
             weight_kg = EXCLUDED.weight_kg,
             updated_at = EXCLUDED.updated_at,

@@ -274,16 +274,34 @@ def build_training_context(conn) -> str:
     ).fetchall()
     top_exercises = conn.execute(
         """
-        SELECT ws.exercise, COUNT(*) AS sets, MAX(ws.weight_kg) AS max_kg,
-               AVG(ws.rpe) AS avg_rpe
-        FROM workout_sets ws
-        JOIN workouts w ON w.id = ws.workout_id
-        WHERE ws.is_warmup = FALSE
-          AND w.started_at::DATE >= $since
-          AND ws.weight_kg IS NOT NULL
-        GROUP BY ws.exercise ORDER BY sets DESC LIMIT 20
+        WITH ex_stats AS (
+            SELECT ws.exercise,
+                   COUNT(*) AS sets,
+                   COUNT(DISTINCT w.started_at::DATE) AS sessions,
+                   quantile_cont(ws.weight_kg, 0.8) FILTER (
+                       WHERE ws.rpe IS NULL OR ws.rpe BETWEEN 6 AND 9
+                   ) AS typical_kg,
+                   MAX(ws.weight_kg) FILTER (
+                       WHERE w.started_at::DATE >= $recent
+                   ) AS recent_max_kg,
+                   AVG(ws.rpe) AS avg_rpe
+            FROM workout_sets ws
+            JOIN workouts w ON w.id = ws.workout_id
+            WHERE ws.is_warmup = FALSE
+              AND w.started_at::DATE >= $since
+              AND ws.weight_kg IS NOT NULL
+              AND ws.weight_kg > 0
+            GROUP BY ws.exercise
+        )
+        SELECT exercise, sets, sessions, typical_kg, recent_max_kg, avg_rpe
+        FROM ex_stats
+        WHERE sets >= 3 AND sessions >= 2 AND typical_kg IS NOT NULL
+        ORDER BY sets DESC LIMIT 20
         """,
-        {"since": (today - timedelta(days=90)).isoformat()},
+        {
+            "since": (today - timedelta(days=90)).isoformat(),
+            "recent": (today - timedelta(days=30)).isoformat(),
+        },
     ).fetchall()
     prefs = conn.execute(
         "SELECT exercise, status, notes FROM exercise_preferences WHERE status IN ('no', 'sub')"
@@ -458,11 +476,30 @@ def build_training_context(conn) -> str:
             f"(showing {history_limit} most recent of {len(workout_rows)})"
         )
 
+    def _is_dumbbell(name: str) -> bool:
+        n = name.lower()
+        return "dumbbell" in n or "(db)" in n
+
+    def _fmt_lbs(name: str, lb: float) -> str:
+        """Render a weight with a per-DB callout for dumbbell exercises.
+
+        Stored values are total bilateral (matches Hevy convention). For
+        dumbbell exercises, also show per-hand to prevent the LLM from
+        prescribing a number Rob would interpret as per-DB.
+        """
+        if _is_dumbbell(name):
+            return f"{lb:g} lb total ({lb / 2:g} lb/DB)"
+        return f"{lb:g} lb"
+
     ww_limit = 40
-    lines.append(f"\n## WORKING WEIGHTS ({len(ww_rows)} exercises on record)")
+    lines.append(
+        f"\n## WORKING WEIGHTS ({len(ww_rows)} exercises on record)\n"
+        "Weights are TOTAL bilateral (matches Hevy). For dumbbell exercises "
+        "the per-hand value is shown in parentheses — that's what Rob loads."
+    )
     for ex, wkg, src in ww_rows[:ww_limit]:
-        lbs = round(wkg * 2.20462, 1) if wkg else 0
-        lines.append(f"- {ex}: {lbs} lbs ({wkg:.1f} kg) [{src}]")
+        lb = round(wkg * 2.20462, 1) if wkg else 0
+        lines.append(f"- {ex}: {_fmt_lbs(ex, lb)} [{src}]")
     if len(ww_rows) > ww_limit:
         lines.append(
             f"  ... {len(ww_rows) - ww_limit} more truncated "
@@ -470,13 +507,18 @@ def build_training_context(conn) -> str:
         )
 
     lines.append(
-        f"\n## TOP EXERCISES (last 90d by frequency — top {len(top_exercises)}, "
-        f"capped at SQL LIMIT 20)"
+        f"\n## TOP EXERCISES (last 90d — top {len(top_exercises)} by frequency, "
+        "filtered to ≥3 sets across ≥2 sessions; "
+        "weights are P80 of working sets at RPE 6–9, NOT max)"
     )
-    for ex, sets, max_kg, avg_rpe in top_exercises:
-        lbs = round(max_kg * 2.20462, 1) if max_kg else "bw"
+    for ex, sets, sessions, typical_kg, recent_max_kg, avg_rpe in top_exercises:
+        typ_lb = round(typical_kg * 2.20462, 1) if typical_kg else None
+        typ_str = f"typical {_fmt_lbs(ex, typ_lb)}" if typ_lb is not None else "bw"
+        if recent_max_kg and typical_kg and recent_max_kg > typical_kg * 1.05:
+            rec_lb = round(recent_max_kg * 2.20462, 1)
+            typ_str += f", recent peak {_fmt_lbs(ex, rec_lb)} (last 30d)"
         rpe_str = f" @RPE {avg_rpe:.1f}" if avg_rpe else ""
-        lines.append(f"- {ex}: {sets} sets, max {lbs} lbs{rpe_str}")
+        lines.append(f"- {ex}: {sets} sets / {sessions} sessions, {typ_str}{rpe_str}")
 
     lines.append(f"\n## VOLUME TREND (8-week): {vol_trend_label}")
     if gates["e1rm_regression_4wk_pct"] is not None:
