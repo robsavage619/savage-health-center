@@ -5,6 +5,113 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Eyebrow } from "@/components/ui/metric";
 
+// Highlights key biometric figures inline (HRV, sigma, scores, percentages, ACWR values)
+function HighlightFigures({ text }: { text: string }) {
+  const parts = text.split(/([\+\-]?\d+\.?\d*σ|\d{2,3}\/100|[\+\-]?\d+\.?\d+%|\d+\.?\d*\s*ms\b|\bACWR\s+\d+\.\d+|\d+\.\d+σ)/g);
+  return (
+    <>
+      {parts.map((part, i) =>
+        /[\+\-]?\d+\.?\d*σ|\d{2,3}\/100|[\+\-]?\d+\.?\d+%|\d+\.?\d*\s*ms\b|\bACWR\s+\d+\.\d+/.test(part) ? (
+          <span
+            key={i}
+            className="font-medium tabular-nums"
+            style={{ color: "oklch(0.88 0.18 145)" }}
+          >
+            {part}
+          </span>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
+
+// Section labels inferred from paragraph position (narratives follow a consistent structure)
+const PARA_LABELS = [
+  "Readiness",
+  "Training load",
+  "Today's focus",
+  "Goals & nutrition",
+  "Trajectory",
+];
+
+function StoryNarrative({
+  narrative,
+  sources,
+}: {
+  narrative: string;
+  sources?: string[];
+}) {
+  const paras = narrative.split(/\n\n+/).filter(Boolean);
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? paras : paras.slice(0, 2);
+
+  return (
+    <article>
+      {/* Lede paragraph */}
+      {paras[0] && (
+        <div
+          className="pl-3 mb-5"
+          style={{ borderLeft: "2px solid oklch(0.88 0.18 145 / 0.6)" }}
+        >
+          <p className="text-[14.5px] leading-[1.8] text-[var(--text-primary)] font-[430]">
+            <HighlightFigures text={paras[0]} />
+          </p>
+        </div>
+      )}
+
+      {/* Body paragraphs */}
+      {visible.slice(1).map((para, i) => {
+        const idx = i + 1;
+        const label = PARA_LABELS[idx] ?? `Note ${idx + 1}`;
+        return (
+          <div key={idx} className="mb-4">
+            <div className="flex items-baseline gap-2 mb-1.5">
+              <span
+                className="text-[9px] font-semibold uppercase tracking-widest shrink-0"
+                style={{ color: "oklch(0.88 0.18 145 / 0.7)" }}
+              >
+                {label}
+              </span>
+              <div className="h-px flex-1 bg-[var(--hairline)]" />
+            </div>
+            <p className="text-[13px] leading-[1.75] text-[var(--text-muted)]">
+              <HighlightFigures text={para} />
+            </p>
+          </div>
+        );
+      })}
+
+      {paras.length > 2 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="text-[11px] text-[var(--text-dim)] hover:text-[var(--text-muted)] transition-colors mt-1"
+        >
+          {expanded ? "↑ Show less" : `↓ ${paras.length - 2} more sections`}
+        </button>
+      )}
+
+      {sources && sources.length > 0 && (
+        <div className="pt-3 mt-4 border-t border-[var(--hairline)]">
+          <span className="text-[10px] uppercase tracking-wider text-[var(--text-dim)] mr-2">
+            Sources
+          </span>
+          {sources.map((s, i) => (
+            <span
+              key={i}
+              className="inline-block mr-1.5 mt-1 px-2 py-0.5 rounded-full border border-[var(--hairline)] text-[10.5px] text-[var(--text-muted)]"
+            >
+              {s}
+            </span>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
 const STORY_PROMPT = `Generate Rob's daily health story AND today's workout plan in a single pass.
 
 STEP 1 — Read context.
@@ -23,7 +130,12 @@ POST to http://127.0.0.1:8000/api/workout/plan with body { "plan": <plan>, "sour
 
 Confirm both POSTs succeeded.`;
 
-type SyncState = { kind: "idle" } | { kind: "syncing" } | { kind: "ok" } | { kind: "err"; msg: string };
+type SyncCounts = { recovery: number; sleep: number; workout: number };
+type SyncState =
+  | { kind: "idle" }
+  | { kind: "syncing" }
+  | { kind: "ok"; counts?: SyncCounts }
+  | { kind: "err"; msg: string };
 
 interface StoryData {
   story_date?: string;
@@ -85,10 +197,11 @@ export function HealthStory() {
   async function handleSync() {
     setSync({ kind: "syncing" });
     try {
-      await api.syncAll();
+      const result = await api.syncAll();
       await qc.invalidateQueries();
-      setSync({ kind: "ok" });
-      setTimeout(() => setSync({ kind: "idle" }), 3000);
+      const counts = result?.whoop?.counts as SyncCounts | undefined;
+      setSync({ kind: "ok", counts });
+      setTimeout(() => setSync({ kind: "idle" }), 5000);
     } catch (e) {
       setSync({ kind: "err", msg: e instanceof Error ? e.message : "sync failed" });
       setTimeout(() => setSync({ kind: "idle" }), 4000);
@@ -159,7 +272,9 @@ export function HealthStory() {
             {sync.kind === "syncing"
               ? "Syncing…"
               : sync.kind === "ok"
-              ? "Synced"
+              ? sync.counts
+                ? `${sync.counts.recovery}r · ${sync.counts.sleep}s · ${sync.counts.workout}w`
+                : "Synced"
               : sync.kind === "err"
               ? "Failed"
               : "Sync"}
@@ -205,26 +320,7 @@ export function HealthStory() {
         )}
 
         {hasContent && (
-          <article className="prose-narrative text-[14px] leading-[1.7] text-[var(--text-primary)] space-y-4">
-            {story.narrative!.split(/\n\n+/).map((para, i) => (
-              <p key={i}>{para}</p>
-            ))}
-            {story.sources && story.sources.length > 0 && (
-              <div className="pt-2 mt-3 border-t border-[var(--hairline)]">
-                <span className="text-[10px] uppercase tracking-wider text-[var(--text-dim)] mr-2">
-                  Sources
-                </span>
-                {story.sources.map((s, i) => (
-                  <span
-                    key={i}
-                    className="inline-block mr-1.5 mt-1 px-2 py-0.5 rounded-full border border-[var(--hairline)] text-[10.5px] text-[var(--text-muted)]"
-                  >
-                    {s}
-                  </span>
-                ))}
-              </div>
-            )}
-          </article>
+          <StoryNarrative narrative={story.narrative!} sources={story.sources} />
         )}
       </div>
     </div>

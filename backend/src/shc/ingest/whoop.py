@@ -293,12 +293,16 @@ async def sync_workout() -> int:
     return len(records)
 
 
-async def sync_all() -> None:
-    """Full sync — called by APScheduler every 30 min."""
+async def sync_all() -> dict[str, int]:
+    """Full sync — called by APScheduler every 30 min.
+
+    Returns:
+        dict with ``recovery``, ``sleep``, ``workout`` record counts.
+    """
     try:
-        await sync_recovery()
-        await sync_sleep()
-        await sync_workout()
+        recovery_n = await sync_recovery()
+        sleep_n = await sync_sleep()
+        workout_n = await sync_workout()
         async with write_ctx() as conn:
             conn.execute(
                 "INSERT INTO oauth_state (source, last_sync_at, needs_reauth) "
@@ -306,6 +310,7 @@ async def sync_all() -> None:
                 "SET last_sync_at = EXCLUDED.last_sync_at, needs_reauth = FALSE",
                 {"ts": datetime.now(UTC).isoformat()},
             )
+        return {"recovery": recovery_n, "sleep": sleep_n, "workout": workout_n}
     except Exception:
         log.exception("WHOOP sync failed")
         async with write_ctx() as conn:

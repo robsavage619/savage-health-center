@@ -39,20 +39,45 @@ def _apply_migrations(conn: duckdb.DuckDBPyConnection) -> None:
 
 
 def init_db() -> None:
-    """Open write connection, apply migrations, configure encryption key."""
+    """Open write connection, apply migrations, configure encryption key.
+
+    If DuckDB fails to open due to a stale/corrupt WAL file (which happens when
+    the process was killed mid-write or across worktree restarts), the WAL is
+    removed and the connection is retried once.  This is safe because the WAL
+    represents only un-checkpointed data from the previous (now-dead) process.
+    To minimise data loss, ``dev-restart.sh`` calls ``POST /api/internal/checkpoint``
+    before killing the process so the WAL is already flushed before removal.
+    """
     global _write_conn, _write_lock
     db_path = settings.db_path
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = duckdb.connect(str(db_path.resolve()))
-    encryption_key = settings.db_encryption_key
-    if encryption_key:
-        conn.execute(f"PRAGMA key='{encryption_key}'")
+    resolved_path = db_path.resolve()
+    wal_path = resolved_path.with_suffix(".duckdb.wal")
+
+    def _open() -> duckdb.DuckDBPyConnection:
+        conn = duckdb.connect(str(resolved_path))
+        encryption_key = settings.db_encryption_key
+        if encryption_key:
+            conn.execute(f"PRAGMA key='{encryption_key}'")
+        return conn
+
+    try:
+        conn = _open()
+    except duckdb.InternalException as exc:
+        if "WAL" in str(exc) and wal_path.exists():
+            log.warning("Stale DuckDB WAL detected — removing and retrying (%s)", exc)
+            wal_path.unlink()
+            conn = _open()
+        else:
+            raise
 
     _apply_migrations(conn)
+    # Immediately checkpoint so the WAL is clean for the next restart
+    conn.execute("CHECKPOINT")
     _write_conn = conn
     _write_lock = asyncio.Lock()
-    log.info("DuckDB ready at %s", db_path)
+    log.info("DuckDB ready at %s", resolved_path)
 
 
 def get_write_conn() -> duckdb.DuckDBPyConnection:

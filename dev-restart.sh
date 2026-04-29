@@ -12,6 +12,13 @@ WT="${1:-$REPO}"
 
 echo "▶ Restarting SHC from: $WT"
 
+# Checkpoint DuckDB WAL via the running API before killing (preserves all in-flight writes)
+if lsof -ti :8000 &>/dev/null; then
+  echo "▶ Checkpointing DuckDB WAL..."
+  curl -sf -X POST http://127.0.0.1:8000/api/internal/checkpoint 2>/dev/null && echo "  WAL checkpointed" || echo "  Checkpoint skipped (API not ready)"
+  sleep 0.3
+fi
+
 # Kill anything on the ports AND any stale uvicorn processes (prevents DuckDB lock conflicts)
 lsof -ti :3000 -ti :8000 2>/dev/null | xargs kill -9 2>/dev/null || true
 pkill -9 -f "uvicorn shc" 2>/dev/null || true

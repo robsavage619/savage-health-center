@@ -14,12 +14,13 @@ from shc.ai.briefing import build_daily_context, store_briefing
 from shc.ai.workout_planner import (
     GateViolation,
     build_training_context,
+    load_latest_plan,
     load_plan,
     save_plan,
     validate_plan,
 )
 from shc.config import settings
-from shc.db.schema import get_read_conn, write_ctx
+from shc.db.schema import get_read_conn, get_write_conn, write_ctx
 from shc.metrics import compute_daily_state, muscle_group as _mg
 
 router = APIRouter(tags=["dashboard"])
@@ -1960,7 +1961,8 @@ async def workout_next(regen: bool = Query(default=False)) -> dict:
     Priority order:
     1. In-memory cache (fast path, same process lifetime)
     2. DB-persisted plan for today (survives restarts)
-    3. Fallback stub (instructs user to generate via chat)
+    3. Most recent stored plan from any prior date (persistent across day boundaries)
+    4. Fallback stub (instructs user to generate via chat)
     """
     today = date.today().isoformat()
 
@@ -1972,7 +1974,15 @@ async def workout_next(regen: bool = Query(default=False)) -> dict:
         _WORKOUT_CACHE[today] = stored
         return stored
 
-    # No plan yet — return a stub that prompts the user to generate via chat
+    # No plan for today — try the most recent stored plan from any prior date
+    if not regen:
+        latest = load_latest_plan()
+        if latest:
+            plan_dict, plan_date = latest
+            plan_dict["_carried_from"] = plan_date
+            return plan_dict
+
+    # No stored plan at all — return a stub that prompts the user to generate via chat
     conn = get_read_conn()
     try:
         rec = conn.execute(
@@ -2518,3 +2528,14 @@ async def submit_retrospective(body: RetrospectiveSubmission) -> dict:
             },
         )
     return {"status": "ok", "workout_id": body.workout_id}
+
+
+@router.post("/internal/checkpoint")
+async def internal_checkpoint() -> dict:
+    """Force a DuckDB WAL checkpoint so a clean shutdown preserves all writes.
+
+    Called by dev-restart.sh before killing the process.
+    """
+    conn = get_write_conn()
+    conn.execute("CHECKPOINT")
+    return {"status": "ok"}

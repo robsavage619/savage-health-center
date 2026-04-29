@@ -663,3 +663,21 @@ def load_plan(target_date: str | None = None) -> dict[str, Any] | None:
     finally:
         conn.close()
     return json.loads(row[0]) if row else None
+
+
+def load_latest_plan() -> tuple[dict[str, Any], str] | None:
+    """Load the most recent stored plan regardless of date.
+
+    Returns:
+        (plan_dict, plan_date_iso) or None if the table is empty.
+    """
+    conn = get_read_conn()
+    try:
+        row = conn.execute(
+            "SELECT plan_json, date FROM workout_plans ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return json.loads(row[0]), str(row[1])
