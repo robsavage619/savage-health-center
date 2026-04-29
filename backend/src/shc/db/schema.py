@@ -44,7 +44,7 @@ def init_db() -> None:
     db_path = settings.db_path
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = duckdb.connect(str(db_path))
+    conn = duckdb.connect(str(db_path.resolve()))
     encryption_key = settings.db_encryption_key
     if encryption_key:
         conn.execute(f"PRAGMA key='{encryption_key}'")
