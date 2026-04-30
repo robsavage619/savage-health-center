@@ -4,6 +4,44 @@ All notable changes to this project. Dates are commit dates (Pacific time).
 
 ---
 
+## 2026-04-29
+
+### Added
+
+- **WhoopVitals card** — Premium dark-gradient card (linear-gradient with subtle oklch blue shift) anchored to the official WHOOP wordmark SVG. Four-up KPI strip in Orbitron: Recovery score/100 with σ-colored glow, Strain as cardio min/wk, Sleep hours color-coded (≥7.5h green, ≥6.5h yellow, <6.5h red), and HRV σ deviation from 28d baseline. Live sync-status chip flags last sync time or OAuth reauth. Beta-blocker days annotated `β-adj` on HRV tile. "How to read this" footer covers all four metrics.
+
+- **Orbitron typography system** — Consistent application of Orbitron across the entire UI: all section eyebrows (`.eyebrow`), section titles (`.shc-section-title`), metric numerals (`.metric-xl/lg/md`), tab switchers, and KPI labels. Adds `SectionTitle` and `HowToRead` components to `ui/metric.tsx`.
+
+- **Clinical timeline** — Replaced the three-card clinical overview (conditions list, medications list, labs list) with a unified descending-date event lane. Color-coded dots by event type (medication = chart-line blue, condition = neutral, lab = positive green). Merges all event types into a single scannable clinical narrative.
+
+- **Cardio trend KPIs** — `TrendKpi` sub-component: Orbitron number + directional delta badge comparing last 14 days vs prior 14 days. Four KPIs above the session log: cardio min/wk, avg HR, avg RPE, kcal/wk. Directional arrows and colors (positive/neutral/negative) match the same threshold system as recovery metrics.
+
+- **Cardio table truncation** — Session log defaults to 8 most-recent rows; "Show all" toggle reveals the full history. Keeps the log form accessible without infinite scroll.
+
+- **PulseCard in right rail** — Replaces the empty space at the top of the 320px right column with a readiness orb (Orbitron score, radial oklch glow, tier-colored), plain-language tier interpretation, and a 2-col sync-age footer for WHOOP and Hevy. Fills dead space with signal-rich content.
+
+- **Sleep panel improvements** — Per-night rows now show `wk md` date format (e.g. "Fri 4/25"). Footer row adds 7d sleep debt in hours alongside best-night date and deep%. Interpretation copy covers target bands (7.5h, 15–20% deep, 20–25% REM, consistency < 1.0σ, debt > 5h flag).
+
+- **Patterns pane helptext** — Added interpretation paragraph before scatter charts explaining how to read sleep-vs-recovery and HRV-vs-recovery correlations.
+
+- **Correlation cards empty state** — Richer empty state: shows days collected, days remaining to unlock, and three actionable tips (check-in regularly, maintain consistent sleep, log cardio). When data is present, adds helptext on how to interpret Pearson-r and confidence ranges.
+
+- **Trend Intelligence tab redesign** — Section header upgraded from `Eyebrow` to `shc-section-title`. Tab switcher replaced with a pill-style framed container (`oklch(1 0 0 / 0.025)` background, hairline border); each tab uses Orbitron uppercase with `tracking-[0.16em]`.
+
+- **Analysis persistence and WHOOP sync counts** — Vault analysis results persist across app restarts; WHOOP background sync now logs ingested record counts per run.
+
+- **Vault signal coverage** — New vault signals for body recomposition (strength gain vs weight delta), push/pull imbalance, and 4-week volume spikes.
+
+### Fixed
+
+- **Cooldown object array crash** — Workout renderer no longer crashes when the cooldown field is an object instead of an array.
+
+- **Block label undefined crash** — Guard for undefined block labels in workout plan renderer; validates block/exercise field names before rendering.
+
+- **DuckDB WAL path mismatch** — Prevents startup crash when WAL file path doesn't match the DB path after a directory move.
+
+---
+
 ## 2026-04-24
 
 ### Added
