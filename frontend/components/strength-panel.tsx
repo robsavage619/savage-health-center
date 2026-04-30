@@ -162,9 +162,10 @@ function VolumeTrend() {
 
 function PRTable({ onPick }: { onPick: (exercise: string) => void }) {
   const today = new Date();
+  const [showAll, setShowAll] = useState(false);
   const { data = [], isLoading } = useQuery({
-    queryKey: ["prs"],
-    queryFn: () => api.trainingPRs(15),
+    queryKey: ["prs", showAll ? "all" : "top"],
+    queryFn: () => api.trainingPRs(showAll ? 1000 : 15),
     refetchInterval: 600_000,
   });
 
@@ -178,7 +179,7 @@ function PRTable({ onPick }: { onPick: (exercise: string) => void }) {
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between">
-        <Eyebrow>Strength PRs · top 15</Eyebrow>
+        <Eyebrow>Strength PRs · {showAll ? `all ${data.length}` : "top 15"}</Eyebrow>
         <span className="text-[10.5px] text-[var(--text-dim)]">click row · est 1RM →</span>
       </div>
       {isLoading ? (
@@ -222,6 +223,15 @@ function PRTable({ onPick }: { onPick: (exercise: string) => void }) {
             );
           })}
         </div>
+      )}
+      {!isLoading && data.length >= 15 && (
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="w-full mt-2 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[var(--text-dim)] hover:text-[var(--text-muted)] border-t border-[var(--hairline)] transition-colors"
+          style={{ fontFamily: "var(--font-orbitron)" }}
+        >
+          {showAll ? "Show top 15" : "Show all exercises"}
+        </button>
       )}
     </div>
   );

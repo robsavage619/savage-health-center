@@ -880,7 +880,7 @@ async def training_weekly(weeks: int = Query(52, gt=0, le=260)) -> list[dict]:
 
 
 @router.get("/training/prs")
-async def training_prs(n: int = Query(15, gt=0, le=100)) -> list[dict]:
+async def training_prs(n: int = Query(15, gt=0, le=1000)) -> list[dict]:
     """PRs ranked by max weight, with reps-at-PR + Epley estimated 1RM.
 
     Epley: 1RM = weight * (1 + reps/30). For a true 1-rep set this collapses
