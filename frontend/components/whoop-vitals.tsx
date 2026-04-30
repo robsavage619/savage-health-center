@@ -93,8 +93,8 @@ export function WhoopVitals() {
             <img
               src="/whoop-wordmark.svg"
               alt="WHOOP"
-              className="h-[14px] w-auto"
-              style={{ color: "var(--text-primary)", filter: "drop-shadow(0 0 12px oklch(0.72 0.18 145 / 0.25))" }}
+              className="h-[18px] w-auto"
+              style={{ filter: "drop-shadow(0 0 14px oklch(0.72 0.18 145 / 0.30))" }}
             />
           </div>
           <div className="flex items-center gap-3 text-[10px] tabular-nums">
