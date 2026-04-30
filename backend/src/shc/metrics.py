@@ -384,10 +384,9 @@ def _training_load(conn, today: date) -> TrainingLoadMetrics:
     # Days since each muscle group (uses workout_sets — strength only).
     set_rows = conn.execute(
         """
-        SELECT w.started_at::DATE AS day, ws.exercise
-        FROM workout_sets ws
-        JOIN workouts w ON w.id = ws.workout_id
-        WHERE ws.is_warmup = FALSE AND w.started_at::DATE >= $since
+        SELECT day_d AS day, ws.exercise
+        FROM workout_sets_dedup ws
+        WHERE ws.is_warmup = FALSE AND day_d >= $since
         """,
         {"since": (today - timedelta(days=28)).isoformat()},
     ).fetchall()
@@ -587,10 +586,9 @@ def _e1rm_regression(conn, today: date) -> float | None:
     primary = conn.execute(
         """
         SELECT ws.exercise, COUNT(*) AS n
-        FROM workout_sets ws
-        JOIN workouts w ON w.id = ws.workout_id
+        FROM workout_sets_dedup ws
         WHERE ws.is_warmup = FALSE AND ws.weight_kg IS NOT NULL
-          AND w.started_at::DATE >= $s
+          AND day_d >= $s
         GROUP BY ws.exercise
         ORDER BY n DESC LIMIT 1
         """,
@@ -600,12 +598,11 @@ def _e1rm_regression(conn, today: date) -> float | None:
         return None
     rows = conn.execute(
         """
-        SELECT w.started_at::DATE AS day, MAX(ws.weight_kg * (1 + ws.reps / 30.0)) AS e1rm
-        FROM workout_sets ws
-        JOIN workouts w ON w.id = ws.workout_id
+        SELECT day_d AS day, MAX(ws.weight_kg * (1 + ws.reps / 30.0)) AS e1rm
+        FROM workout_sets_dedup ws
         WHERE ws.is_warmup = FALSE AND ws.weight_kg IS NOT NULL
-          AND ws.exercise = $ex AND w.started_at::DATE >= $s
-        GROUP BY day ORDER BY day
+          AND ws.exercise = $ex AND day_d >= $s
+        GROUP BY day_d ORDER BY day_d
         """,
         {"ex": primary[0], "s": (today - timedelta(days=56)).isoformat()},
     ).fetchall()

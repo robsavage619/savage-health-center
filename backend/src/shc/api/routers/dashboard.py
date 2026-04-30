@@ -778,26 +778,24 @@ async def training_last_session() -> dict:
         row = conn.execute(
             """
             SELECT
-                started_at::DATE AS day,
+                day_d AS day,
                 COUNT(*) AS set_count,
-                COUNT(DISTINCT exercise) AS exercise_count,
+                COUNT(DISTINCT canon_exercise) AS exercise_count,
                 SUM(weight_kg * reps) AS volume_kg,
                 ARRAY_AGG(DISTINCT exercise ORDER BY exercise) AS exercises
-            FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
+            FROM workout_sets_dedup ws
             WHERE ws.is_warmup = FALSE
-            GROUP BY day
-            ORDER BY day DESC
+            GROUP BY day_d
+            ORDER BY day_d DESC
             LIMIT 1
             """
         ).fetchone()
         week_row = conn.execute(
             """
             SELECT COUNT(*), SUM(weight_kg * reps)
-            FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
+            FROM workout_sets_dedup ws
             WHERE ws.is_warmup = FALSE
-              AND started_at::DATE >= date_trunc('week', current_date)::DATE
+              AND day_d >= date_trunc('week', current_date)::DATE
             """
         ).fetchone()
     finally:
@@ -826,14 +824,13 @@ async def training_heatmap(weeks: int = Query(104, gt=0, le=260)) -> list[dict]:
         rows = conn.execute(
             """
             SELECT
-                started_at::DATE AS day,
+                day_d AS day,
                 COUNT(*) AS set_count,
                 SUM(weight_kg * reps) AS volume_kg
-            FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
-            WHERE ws.is_warmup = FALSE AND started_at::DATE >= $since
-            GROUP BY day
-            ORDER BY day
+            FROM workout_sets_dedup ws
+            WHERE ws.is_warmup = FALSE AND day_d >= $since
+            GROUP BY day_d
+            ORDER BY day_d
             """,
             {"since": since},
         ).fetchall()
@@ -862,13 +859,12 @@ async def training_weekly(weeks: int = Query(52, gt=0, le=260)) -> list[dict]:
                 date_trunc('week', started_at)::DATE AS week,
                 COUNT(*) AS sets,
                 SUM(weight_kg * reps) AS volume_kg,
-                COUNT(DISTINCT started_at::DATE) AS sessions
-            FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
+                COUNT(DISTINCT day_d) AS sessions
+            FROM workout_sets_dedup ws
             WHERE ws.is_warmup = FALSE
               AND weight_kg IS NOT NULL
               AND reps IS NOT NULL
-              AND started_at::DATE >= $since
+              AND day_d >= $since
             GROUP BY week
             ORDER BY week
             """,
@@ -896,12 +892,11 @@ async def training_prs(n: int = Query(15, gt=0, le=1000)) -> list[dict]:
             WITH normalized AS (
                 SELECT
                     ws.exercise AS raw_exercise,
-                    trim(regexp_replace(ws.exercise, '\\s*\\([^)]*\\)\\s*$', '')) AS canon,
+                    ws.canon_exercise AS canon,
                     ws.weight_kg,
                     ws.reps,
-                    w.started_at
-                FROM workout_sets ws
-                JOIN workouts w ON w.id = ws.workout_id
+                    ws.started_at
+                FROM workout_sets_dedup ws
                 WHERE ws.is_warmup = FALSE
                   AND ws.weight_kg IS NOT NULL
                   AND ws.weight_kg > 20
@@ -981,17 +976,16 @@ async def training_exercise_last(exercise: str = Query(..., description="Exercis
             """
             SELECT
                 ws.exercise,
-                w.started_at::DATE AS day,
+                ws.day_d AS day,
                 ws.weight_kg,
                 ws.reps,
                 ws.rpe
-            FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
+            FROM workout_sets_dedup ws
             WHERE ws.is_warmup = FALSE
               AND LOWER(ws.exercise) LIKE $pat
               AND ws.weight_kg IS NOT NULL
               AND ws.reps IS NOT NULL AND ws.reps > 0
-            ORDER BY w.started_at DESC, ws.weight_kg DESC
+            ORDER BY ws.started_at DESC, ws.weight_kg DESC
             LIMIT 1
             """,
             {"pat": f"%{exercise.lower()}%"},
@@ -1019,16 +1013,15 @@ async def training_top_exercises(n: int = Query(10, gt=0, le=100)) -> list[dict]
         rows = conn.execute(
             """
             SELECT
-                exercise,
+                ARG_MAX(exercise, LENGTH(exercise)) AS exercise,
                 COUNT(*) AS total_sets,
                 SUM(weight_kg * reps) AS total_volume_kg,
                 MAX(weight_kg) AS pr_kg,
-                COUNT(DISTINCT started_at::DATE) AS training_days,
-                MAX(started_at::DATE) AS last_performed
-            FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
+                COUNT(DISTINCT day_d) AS training_days,
+                MAX(day_d) AS last_performed
+            FROM workout_sets_dedup ws
             WHERE ws.is_warmup = FALSE AND weight_kg IS NOT NULL AND weight_kg > 20
-            GROUP BY exercise
+            GROUP BY canon_exercise
             HAVING STDDEV(weight_kg) > 1
             ORDER BY total_sets DESC
             LIMIT $n
@@ -1040,10 +1033,9 @@ async def training_top_exercises(n: int = Query(10, gt=0, le=100)) -> list[dict]
             SELECT
                 date_trunc('week', started_at)::DATE AS week,
                 SUM(weight_kg * reps) AS volume_kg
-            FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
+            FROM workout_sets_dedup ws
             WHERE ws.is_warmup = FALSE
-              AND started_at::DATE >= (current_date - INTERVAL '16 weeks')
+              AND day_d >= (current_date - INTERVAL '16 weeks')
             GROUP BY week
             ORDER BY week
             """
@@ -1081,11 +1073,10 @@ async def training_overload_signal() -> dict:
                 date_trunc('week', started_at)::DATE AS week,
                 SUM(weight_kg * reps) AS volume_kg,
                 COUNT(*) AS sets,
-                COUNT(DISTINCT started_at::DATE) AS days
-            FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
+                COUNT(DISTINCT day_d) AS days
+            FROM workout_sets_dedup ws
             WHERE ws.is_warmup = FALSE
-              AND started_at::DATE >= (current_date - INTERVAL '16 weeks')
+              AND day_d >= (current_date - INTERVAL '16 weeks')
             GROUP BY week
             ORDER BY week
             """
@@ -1295,10 +1286,9 @@ async def training_muscle_balance(weeks: int = Query(4, gt=0, le=52)) -> dict:
             SELECT ws.exercise,
                    COUNT(*) AS sets,
                    SUM(weight_kg * reps) AS volume_kg
-            FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
+            FROM workout_sets_dedup ws
             WHERE ws.is_warmup = FALSE
-              AND started_at::DATE >= (current_date - ($w * INTERVAL '7 days'))
+              AND day_d >= (current_date - ($w * INTERVAL '7 days'))
             GROUP BY ws.exercise
             """,
             {"w": weeks},
@@ -2013,11 +2003,10 @@ async def workout_next(regen: bool = Query(default=False)) -> dict:
         ).fetchone()
         workout_rows = conn.execute(
             """
-            SELECT w.started_at::DATE AS day, ws.exercise, COUNT(*) AS sets
-            FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
-            WHERE ws.is_warmup = FALSE AND w.started_at::DATE >= $since
-            GROUP BY day, ws.exercise ORDER BY day DESC
+            SELECT day_d AS day, ws.exercise, COUNT(*) AS sets
+            FROM workout_sets_dedup ws
+            WHERE ws.is_warmup = FALSE AND day_d >= $since
+            GROUP BY day_d, ws.exercise ORDER BY day_d DESC
             """,
             {"since": (date.today() - timedelta(days=14)).isoformat()},
         ).fetchall()
@@ -2360,53 +2349,24 @@ async def lift_progression(
 ) -> dict:
     """Return per-session weight/volume history for a specific exercise.
 
-    Dedupes sets that appear in both Fitbod and Hevy (same day + exercise +
-    weight + reps). Hevy wins as the canonical source when both are present,
-    since Hevy is the live API and Fitbod is a historical CSV.
+    Reads from ``workout_sets_dedup`` so workouts logged to both Fitbod and
+    Hevy aren't counted twice.
     """
     conn = get_read_conn()
     try:
         rows = conn.execute(
             """
-            -- For each (day, canonical exercise), pick one source's rows.
-            -- Hevy wins if present; Fitbod is the fallback. This avoids
-            -- double-counting workouts logged to both apps without losing
-            -- legitimate identical sets within a single session.
-            WITH labeled AS (
-                SELECT
-                    ws.*,
-                    w.source,
-                    w.started_at::DATE AS day_d,
-                    trim(regexp_replace(ws.exercise, '\\s*\\([^)]*\\)\\s*$', '')) AS canon
-                FROM workout_sets ws
-                JOIN workouts w ON w.id = ws.workout_id
-                WHERE LOWER(ws.exercise) LIKE $pat
-            ),
-            best_source AS (
-                SELECT day_d, canon,
-                       CASE WHEN COUNT(*) FILTER (WHERE source = 'hevy') > 0 THEN 'hevy'
-                            WHEN COUNT(*) FILTER (WHERE source = 'fitbod') > 0 THEN 'fitbod'
-                            ELSE MIN(source) END AS chosen_source
-                FROM labeled
-                GROUP BY day_d, canon
-            ),
-            deduped AS (
-                SELECT l.*
-                FROM labeled l
-                JOIN best_source b ON b.day_d = l.day_d
-                                  AND b.canon = l.canon
-                                  AND b.chosen_source = l.source
-            )
             SELECT
                 day_d AS day,
-                exercise,
+                ws.exercise,
                 COUNT(*) FILTER (WHERE NOT is_warmup) AS work_sets,
                 MAX(weight_kg) FILTER (WHERE NOT is_warmup) AS max_kg,
                 SUM(reps) FILTER (WHERE NOT is_warmup) AS total_reps,
                 SUM(weight_kg * reps) FILTER (WHERE NOT is_warmup) AS volume_kg,
                 AVG(rpe) FILTER (WHERE NOT is_warmup AND rpe IS NOT NULL) AS avg_rpe
-            FROM deduped
-            GROUP BY day_d, exercise
+            FROM workout_sets_dedup ws
+            WHERE LOWER(ws.exercise) LIKE $pat
+            GROUP BY day_d, ws.exercise
             ORDER BY day_d DESC
             LIMIT $n
             """,
@@ -2452,14 +2412,13 @@ async def lift_stalls(min_sessions: int = Query(default=4, ge=2, le=20)) -> list
             WITH ranked AS (
                 SELECT
                     ws.exercise,
-                    w.started_at::DATE AS day,
+                    day_d AS day,
                     MAX(ws.weight_kg) AS max_kg,
-                    ROW_NUMBER() OVER (PARTITION BY ws.exercise ORDER BY w.started_at DESC) AS rn,
+                    ROW_NUMBER() OVER (PARTITION BY ws.exercise ORDER BY started_at DESC) AS rn,
                     COUNT(*) OVER (PARTITION BY ws.exercise) AS total_sessions
-                FROM workout_sets ws
-                JOIN workouts w ON w.id = ws.workout_id
+                FROM workout_sets_dedup ws
                 WHERE ws.is_warmup = FALSE AND ws.weight_kg IS NOT NULL AND ws.weight_kg > 0
-                GROUP BY ws.exercise, day, w.started_at
+                GROUP BY ws.exercise, day_d, started_at
             )
             SELECT exercise, max_kg, rn, total_sessions
             FROM ranked
