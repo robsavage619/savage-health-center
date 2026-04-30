@@ -49,8 +49,15 @@ def ingest_clinical_profile(yaml_path: Path | None = None) -> dict[str, int]:
 
     conn = get_read_conn()
 
+    # Wipe prior YAML rows AND API-bootstrap test rows (UUID-shaped IDs from
+    # the /api/clinical/medication endpoint that was used to seed bare-bones
+    # data before this YAML existed). Migration-seeded rows like 'obs-*' are
+    # preserved.
+    UUID_LIKE = "________-____-____-____-____________"
+
     # Conditions
     conn.execute("DELETE FROM conditions WHERE id LIKE $p", {"p": f"{SOURCE}:%"})
+    conn.execute("DELETE FROM conditions WHERE id LIKE $p", {"p": UUID_LIKE})
     n_cond = 0
     for c in data.get("conditions", []) or []:
         cid = f"{SOURCE}:cond:{_hash(c['name'], str(c.get('onset', '')))}"
@@ -73,6 +80,7 @@ def ingest_clinical_profile(yaml_path: Path | None = None) -> dict[str, int]:
 
     # Medications
     conn.execute("DELETE FROM medications WHERE id LIKE $p", {"p": f"{SOURCE}:%"})
+    conn.execute("DELETE FROM medications WHERE id LIKE $p", {"p": UUID_LIKE})
     n_med = 0
     for m in data.get("medications", []) or []:
         mid = f"{SOURCE}:med:{_hash(m['name'], str(m.get('started', '')))}"
