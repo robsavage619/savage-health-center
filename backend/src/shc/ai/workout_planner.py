@@ -38,6 +38,10 @@ _KEEP_HEADINGS = {
     "## Sequence of Impairments",
     "## Recovery Time by Muscle Group",
     "## Boundary Conditions",
+    # Exercise-science sections
+    "## Exercise Selection Rules",
+    "## Application to Training Variables",
+    "## Specificity Checklist",
 }
 
 # Map vault tags / filename keywords → state signals they're relevant to.
@@ -79,9 +83,57 @@ _TAG_SIGNALS: dict[str, tuple[str, ...]] = {
     "deload-timing": ("volume_spike",),
     "fatigue-accumulation": ("volume_spike", "high_acwr"),
     "supercompensation": ("volume_spike",),
+    # ── Exercise-science notes (surfaced in workout context via exercise_selection signal) ──
+    "strength-training": ("exercise_selection",),
+    "resistance-training": ("exercise_selection",),
+    "exercise-science": ("exercise_selection",),
+    "programming": ("exercise_selection",),
+    "biomechanics": ("exercise_selection",),
+    "physiology": ("exercise_selection",),
+    "muscle-hypertrophy": ("exercise_selection", "recomposition"),
+    "exercise-physiology": ("exercise_selection",),
+    "exercise-prescription": ("exercise_selection", "recomposition"),
 }
 
-_DEFAULT_VAULT_LIMIT = 6
+# These three notes are loaded unconditionally in workout context.
+# They are not in the ranked vault so they never compete with situational notes
+# (overreaching, illness, etc.) that should still surface when relevant.
+_EXERCISE_SCIENCE_PINNED = [
+    "exercise-selection-strength.md",     # which movements & why (specificity, kinetic chain)
+    "exercise-order-strength.md",         # sequencing within a session
+    "schoenfeld-2010-hypertrophy-mechanisms.md",  # mechanical tension / metabolic stress / muscle damage
+]
+
+_DEFAULT_VAULT_LIMIT = 5  # reduced from 6 — pinned section adds 3 notes, total = 8
+
+
+def load_exercise_science_notes() -> str:
+    """Load the hardcoded exercise-science notes unconditionally for workout context."""
+    wiki_dir = settings.vault_path / "wiki"
+    if not wiki_dir.exists():
+        return ""
+    sections: list[str] = []
+    for filename in _EXERCISE_SCIENCE_PINNED:
+        path = wiki_dir / filename
+        if not path.exists():
+            log.warning("Pinned exercise-science note not found: %s", path)
+            continue
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError as e:
+            log.warning("Pinned vault note unreadable %s: %s", path, e)
+            continue
+        content = _strip_frontmatter(raw)
+        excerpt = _extract_sections(content) or content[:1500]
+        title = Path(filename).stem.replace("-", " ").title()
+        for line in content.split("\n"):
+            if line.startswith("# "):
+                title = line[2:].strip()
+                break
+        sections.append(f"#### {title} ({filename})\n\n{excerpt}")
+    if not sections:
+        return ""
+    return "## EXERCISE SELECTION SCIENCE (always loaded)\n" + "\n\n---\n\n".join(sections)
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -530,7 +582,11 @@ def build_training_context(conn) -> str:
         for ex, status, notes in prefs:
             lines.append(f"- {ex} ({status})" + (f": {notes}" if notes else ""))
 
-    extra: set[str] = set()
+    exercise_science = load_exercise_science_notes()
+    if exercise_science:
+        lines.append("\n" + exercise_science)
+
+    extra: set[str] = {"exercise_selection"}  # surfaces programming/hypertrophy science in ranked vault
     ratio = load.get("push_pull_ratio_28d")
     if ratio is not None and (ratio > 1.3 or ratio < 0.75):
         extra.add("push_pull_imbalance")
