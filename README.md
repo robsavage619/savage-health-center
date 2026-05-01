@@ -21,9 +21,23 @@
 ![Next.js](https://img.shields.io/badge/Next.js-15-1e1e2e?style=flat-square&labelColor=1e1e2e&color=89b4fa)
 ![Claude](https://img.shields.io/badge/Claude-Opus_4.7-1e1e2e?style=flat-square&labelColor=1e1e2e&color=f38ba8)
 ![DuckDB](https://img.shields.io/badge/DuckDB-1.1-1e1e2e?style=flat-square&labelColor=1e1e2e&color=fab387)
+[![CI](https://github.com/robsavage619/savage-health-center/actions/workflows/ci.yml/badge.svg)](https://github.com/robsavage619/savage-health-center/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-1e1e2e?style=flat-square&labelColor=1e1e2e&color=a6e3a1)](LICENSE)
 
 <br />
 </div>
+
+---
+
+## Engineering highlights
+
+- **Agentic AI architecture** — Claude Opus 4.7 generates structured workout plans and readiness briefings from a multi-signal clinical context (HRV σ-deviation, ACWR, medication state, volume history); Ollama fallback for air-gapped mode with model-tier selection at runtime.
+- **Engineered signals, not raw data** — HRV σ-deviation from 28d baseline, ACWR safe-zone tracking, weighted readiness composite (HRV 40% + Sleep 30% + RHR 20% + Subjective 10%, rebalanced on beta-blocker days) — all computed server-side in a single `DailyState` contract so the frontend never re-derives health logic.
+- **Local-first, encrypted storage** — Single embedded DuckDB file encrypted at rest; OAuth tokens and the DB encryption key live in macOS Keychain, nothing sensitive touches disk.
+- **Full-stack ownership** — Python 3.12 + FastAPI backend (uv, pyright, ruff), Next.js 15 + React 19 + TypeScript frontend (Tailwind v4, TanStack Query v5, Recharts), migrations, CI, and multi-source OAuth integrations (WHOOP, Apple Health, Hevy) all in one repo.
+- **Documentation discipline** — Architecture decisions log (`DECISIONS.md`), changelog, contributor guide, and v2 handoff doc committed alongside the code.
+
+<br />
 
 ---
 
@@ -161,6 +175,17 @@ Training heatmap (muscle group × week, volume intensity shading). Personal reco
 ### AI Advisor (`⌘K`)
 
 Full Claude chat sheet with persistent context. Knows your readiness, last 12 weeks of training, sleep debt, active medications, lab history, and goals. Ask anything: "should I do HIIT today?", "why is my HRV trending down?", "write a deload week."
+
+<br />
+
+## Screenshots
+
+<!-- TODO: capture from running app and save to images/ -->
+![Dashboard overview](images/dashboard-overview.png)
+
+![Today's plan — AI-generated workout](images/today-plan.png)
+
+![Trend intelligence — 90-day view](images/trend-intelligence.png)
 
 <br />
 
