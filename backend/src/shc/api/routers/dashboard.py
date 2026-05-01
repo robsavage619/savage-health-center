@@ -2119,9 +2119,11 @@ SUPERSET / DENSITY GUIDANCE (fat-loss layer)
 ═══════════════════════════════════════════════════════════════
 FOR EVERY EXERCISE
 ═══════════════════════════════════════════════════════════════
-• Pull the name VERBATIM from Rob's recent Hevy history (see TOP EXERCISES in context). Do not invent generic names.
-• Prescribe weight in lbs, rounded to 5 lbs, derived from his working_weight × intensity %.
+• SELECT by science first: use the VAULT RESEARCH in context to determine which movement best targets the intended muscle via the most effective mechanism (mechanical tension on the right fiber type, full ROM at the sticking point, kinetic chain coordination). Prefer compound free-weight movements; machines are supplementary unless injury risk or load continuity demands them.
+• THEN match to Hevy history: once the movement is chosen scientifically, find the closest name in WORKING WEIGHTS for load prescription. Use the VERBATIM Hevy exercise name so weight lookup succeeds. Do not confine selection to TOP EXERCISES frequency rank — that list reflects habit, not optimal stimulus.
+• Prescribe weight in lbs, rounded to 5 lbs, derived from working_weight × intensity %.
 • Notes: 1 short cue (form/tempo) — not a paragraph.
+• vault_insights: for each exercise, name the vault source and mechanism that justified the selection (e.g., "Schoenfeld 2010 — mechanical tension on FT fibers via full ROM eccentric; exercise-selection-strength — compound kinetic chain preferred over isolation"). This is why the plan exists, not just a citation.
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT
