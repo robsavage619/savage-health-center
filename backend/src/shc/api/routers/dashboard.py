@@ -199,6 +199,7 @@ class CheckinSubmission(BaseModel):
     illness_flag: bool | None = None
     travel_flag: bool | None = None
     notes: str | None = None
+    muscle_soreness: dict[str, int] | None = None  # {muscle_key: severity 1-3}
 
     @staticmethod
     def _validate_1_10(v: int | None, name: str) -> int | None:
@@ -217,7 +218,7 @@ async def get_checkin_today() -> dict:
             """
             SELECT date, propranolol_taken, body_weight_kg, soreness_overall,
                    sleep_quality_1_10, energy_1_10, stress_1_10, motivation_1_10,
-                   illness_flag, travel_flag, notes
+                   illness_flag, travel_flag, notes, muscle_soreness
             FROM daily_checkin WHERE date = current_date
             """
         ).fetchone()
@@ -225,6 +226,12 @@ async def get_checkin_today() -> dict:
         conn.close()
     if not row:
         return {"date": date.today().isoformat()}
+    ms_raw = row[11]
+    if isinstance(ms_raw, str):
+        try:
+            ms_raw = json.loads(ms_raw)
+        except json.JSONDecodeError:
+            ms_raw = None
     return {
         "date": str(row[0]),
         "propranolol_taken": row[1],
@@ -237,6 +244,7 @@ async def get_checkin_today() -> dict:
         "illness_flag": row[8],
         "travel_flag": row[9],
         "notes": row[10],
+        "muscle_soreness": ms_raw if isinstance(ms_raw, dict) else {},
     }
 
 
@@ -253,14 +261,15 @@ async def post_checkin(body: CheckinSubmission) -> dict:
         if v is not None and not 1 <= v <= 10:
             raise HTTPException(status_code=422, detail=f"{k} must be 1-10")
 
+    ms_json = json.dumps(body.muscle_soreness) if body.muscle_soreness is not None else None
     async with write_ctx() as conn:
         conn.execute(
             """
             INSERT INTO daily_checkin
                 (date, propranolol_taken, body_weight_kg, soreness_overall,
                  sleep_quality_1_10, energy_1_10, stress_1_10, motivation_1_10,
-                 illness_flag, travel_flag, notes)
-            VALUES (current_date, $prop, $wt, $sor, $sq, $en, $st, $mo, $ill, $tr, $no)
+                 illness_flag, travel_flag, notes, muscle_soreness)
+            VALUES (current_date, $prop, $wt, $sor, $sq, $en, $st, $mo, $ill, $tr, $no, $ms)
             ON CONFLICT (date) DO UPDATE SET
                 propranolol_taken = COALESCE(EXCLUDED.propranolol_taken, daily_checkin.propranolol_taken),
                 body_weight_kg    = COALESCE(EXCLUDED.body_weight_kg, daily_checkin.body_weight_kg),
@@ -271,7 +280,8 @@ async def post_checkin(body: CheckinSubmission) -> dict:
                 motivation_1_10   = COALESCE(EXCLUDED.motivation_1_10, daily_checkin.motivation_1_10),
                 illness_flag      = COALESCE(EXCLUDED.illness_flag, daily_checkin.illness_flag),
                 travel_flag       = COALESCE(EXCLUDED.travel_flag, daily_checkin.travel_flag),
-                notes             = COALESCE(EXCLUDED.notes, daily_checkin.notes)
+                notes             = COALESCE(EXCLUDED.notes, daily_checkin.notes),
+                muscle_soreness   = COALESCE(EXCLUDED.muscle_soreness, daily_checkin.muscle_soreness)
             """,
             {
                 "prop": body.propranolol_taken,
@@ -284,6 +294,7 @@ async def post_checkin(body: CheckinSubmission) -> dict:
                 "ill": body.illness_flag,
                 "tr": body.travel_flag,
                 "no": body.notes,
+                "ms": ms_json,
             },
         )
     return {"status": "ok", "date": date.today().isoformat()}

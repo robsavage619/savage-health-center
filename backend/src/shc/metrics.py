@@ -118,6 +118,7 @@ class CheckinMetrics:
     motivation: int | None = None                # 1-10
     illness_flag: bool = False
     travel_flag: bool = False
+    muscle_soreness: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -171,6 +172,31 @@ class DailyState:
 
 _PUSH = ("press", "fly", "dip", "pushup", "push-up", "tricep", "shoulder", "overhead", "chest")
 _PULL = ("row", "pull", "curl", "lat", "deadlift", "shrug", "face pull", "rear delt")
+
+# Body-diagram muscle keys mapped to the planner's push/pull/legs taxonomy.
+# Keys must match the frontend `BodyDiagram` regions verbatim.
+MUSCLE_TO_GROUP: dict[str, str] = {
+    # Push
+    "chest": "push",
+    "front_delts": "push",
+    "side_delts": "push",
+    "triceps": "push",
+    # Pull
+    "lats": "pull",
+    "mid_back": "pull",
+    "traps": "pull",
+    "rear_delts": "pull",
+    "biceps": "pull",
+    # Legs
+    "quads": "legs",
+    "hamstrings": "legs",
+    "glutes": "legs",
+    "adductors": "legs",
+    "calves": "legs",
+    # Core (no group; informational only)
+    "abs": "core",
+    "lower_back": "core",
+}
 _LEGS = ("squat", "leg", "lunge", "hip", "glute", "hamstring", "quad", "calf", "rdl", "step-up")
 _CORE = ("plank", "crunch", "ab ", "core", "oblique", "sit-up", "rotation")
 
@@ -434,7 +460,7 @@ def _checkin(conn, today: date) -> CheckinMetrics:
         """
         SELECT date, propranolol_taken, body_weight_kg, soreness_overall,
                sleep_quality_1_10, energy_1_10, stress_1_10, motivation_1_10,
-               illness_flag, travel_flag
+               illness_flag, travel_flag, muscle_soreness
         FROM daily_checkin WHERE date = $d
         """,
         {"d": today.isoformat()},
@@ -451,6 +477,18 @@ def _checkin(conn, today: date) -> CheckinMetrics:
         m.motivation = int(row[7]) if row[7] is not None else None
         m.illness_flag = bool(row[8]) if row[8] is not None else False
         m.travel_flag = bool(row[9]) if row[9] is not None else False
+        if row[10] is not None:
+            raw = row[10]
+            if isinstance(raw, str):
+                import json as _json
+                try:
+                    raw = _json.loads(raw)
+                except _json.JSONDecodeError:
+                    raw = {}
+            if isinstance(raw, dict):
+                m.muscle_soreness = {
+                    str(k): int(v) for k, v in raw.items() if isinstance(v, (int, float))
+                }
 
     # Body-weight trend (4-week %): prefer manual checkin, fall back to
     # measurements table.
@@ -551,6 +589,29 @@ def _gates(
         if rest is not None and rest < threshold:
             g.forbid_muscle_groups.append(grp)
             reasons.append(f"{grp.title()} {rest}d ago — needs ≥{threshold + 1}d rest")
+
+    # Per-muscle soreness from body-diagram check-in.
+    # Severity 3 (acute) on any muscle in a group → forbid that group.
+    # Severity 2 (moderate) on >=2 muscles in a group → cap intensity moderate.
+    if chk.muscle_soreness:
+        sore_by_grp: dict[str, list[tuple[str, int]]] = {"push": [], "pull": [], "legs": []}
+        for muscle, sev in chk.muscle_soreness.items():
+            grp = MUSCLE_TO_GROUP.get(muscle)
+            if grp and grp in sore_by_grp:
+                sore_by_grp[grp].append((muscle, int(sev)))
+        for grp, items in sore_by_grp.items():
+            if grp in g.forbid_muscle_groups:
+                continue
+            acute = [m for m, s in items if s >= 3]
+            moderate = [m for m, s in items if s == 2]
+            if acute:
+                g.forbid_muscle_groups.append(grp)
+                reasons.append(f"{grp.title()} acute soreness ({', '.join(acute)})")
+            elif len(moderate) >= 2 and g.max_intensity == "high":
+                g.max_intensity = "moderate"
+                reasons.append(
+                    f"{grp.title()} moderate soreness in {len(moderate)} muscles — cap MODERATE"
+                )
 
     # Deload trigger: persistent regression on a primary lift.
     if e1rm_regression_pct is not None and e1rm_regression_pct < -3.0:

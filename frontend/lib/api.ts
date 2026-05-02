@@ -355,6 +355,7 @@ export interface DailyStateCheckin {
   motivation: number | null;
   illness_flag: boolean;
   travel_flag: boolean;
+  muscle_soreness?: Record<string, number>;
 }
 
 export interface DailyStateReadiness {
@@ -411,6 +412,7 @@ export interface CheckinPayload {
   illness_flag?: boolean | null;
   travel_flag?: boolean | null;
   notes?: string | null;
+  muscle_soreness?: Record<string, number> | null;
 }
 
 export interface CheckinToday extends CheckinPayload {
