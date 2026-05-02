@@ -1208,6 +1208,7 @@ async def cardio_recent(days: int = Query(60, gt=0, le=365)) -> dict:
             SELECT id, date, modality, duration_min, avg_hr, rpe, zone_distribution_json
             FROM cardio_sessions
             WHERE date >= (current_date - $d * INTERVAL '1 day')
+              AND id NOT LIKE 'whoop_w_%'
             ORDER BY date DESC
             LIMIT 200
             """,
