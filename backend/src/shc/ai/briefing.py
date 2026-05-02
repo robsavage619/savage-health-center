@@ -283,6 +283,14 @@ def build_daily_context(conn) -> str:
         chk_parts.append("travel flag")
     if chk_parts:
         lines.append(f"Today's check-in: {' · '.join(chk_parts)}")
+    sore_map = chk.get("muscle_soreness") or {}
+    if sore_map:
+        sev_label = {1: "mild", 2: "moderate", 3: "acute"}
+        items = [
+            f"{m.replace('_', ' ')} {sev_label.get(int(s), str(s))}"
+            for m, s in sorted(sore_map.items(), key=lambda kv: -kv[1])
+        ]
+        lines.append(f"Muscle soreness (body diagram): {', '.join(items)}")
     if chk["body_weight_trend_4wk"] is not None:
         lines.append(f"Body weight trend (4wk): {chk['body_weight_trend_4wk']:+.2f}%")
 

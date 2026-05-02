@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type CheckinPayload } from "@/lib/api";
 import { Eyebrow } from "@/components/ui/metric";
+import { BodyDiagram, type Soreness } from "@/components/body-diagram";
 
 /**
  * Daily check-in card — drives the deterministic auto-regulation gates.
@@ -21,6 +22,7 @@ export function CheckinCard() {
   const [sleepQ, setSleepQ] = useState<number | null>(null);
   const [illness, setIllness] = useState<boolean>(false);
   const [travel, setTravel] = useState<boolean>(false);
+  const [muscleSoreness, setMuscleSoreness] = useState<Soreness>({});
   const [editing, setEditing] = useState<boolean>(false);
 
   useEffect(() => {
@@ -34,6 +36,7 @@ export function CheckinCard() {
     setSleepQ(t.sleep_quality_1_10 ?? null);
     setIllness(!!t.illness_flag);
     setTravel(!!t.travel_flag);
+    setMuscleSoreness(t.muscle_soreness ?? {});
   }, [today.data]);
 
   const submit = useMutation({
@@ -123,6 +126,15 @@ export function CheckinCard() {
         label="Sleep quality"
         value={sleepQ}
         onChange={(v) => { setSleepQ(v); send({ sleep_quality_1_10: v }); }}
+      />
+
+      {/* Body diagram — per-muscle soreness */}
+      <BodyDiagram
+        value={muscleSoreness}
+        onChange={(next) => {
+          setMuscleSoreness(next);
+          send({ muscle_soreness: next });
+        }}
       />
 
       {/* Sick / Traveling state pills */}

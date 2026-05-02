@@ -495,6 +495,14 @@ def build_training_context(conn, planning_date: date | None = None) -> tuple[str
         chk_parts.append("travel")
     if chk_parts:
         lines.append(f"- Daily check-in: {' · '.join(chk_parts)}")
+    sore_map = chk.get("muscle_soreness") or {}
+    if sore_map:
+        sev_label = {1: "mild", 2: "moderate", 3: "acute"}
+        sore_groups: list[str] = []
+        for muscle, sev in sorted(sore_map.items(), key=lambda kv: -kv[1]):
+            label = sev_label.get(int(sev), f"{sev}")
+            sore_groups.append(f"{muscle.replace('_', ' ')} {label}")
+        lines.append(f"- Muscle soreness (body diagram): {', '.join(sore_groups)}")
     if chk["body_weight_trend_4wk"] is not None:
         lines.append(f"- Body weight trend (4wk): {chk['body_weight_trend_4wk']:+.2f}%")
     if fresh["gaps"]:
