@@ -200,7 +200,27 @@ export interface ClinicalOverview {
   }[];
   key_labs: (LabPoint & { name: string; loinc: string | null })[];
   lab_history: Record<string, LabPoint[]>;
+  panels: LabPanel[];
   vitals: { metric: string; value: number; unit: string | null; ts: string | null }[];
+}
+
+export interface LabPanelResult {
+  name: string;
+  value: number | null;
+  value_text: string | null;
+  display: string;
+  unit: string | null;
+  ref_low: number | null;
+  ref_high: number | null;
+  ref_text: string | null;
+  is_abnormal: boolean;
+  loinc: string | null;
+}
+
+export interface LabPanel {
+  panel: string;
+  collected_at: string | null;
+  results: LabPanelResult[];
 }
 
 export type RiskZone =

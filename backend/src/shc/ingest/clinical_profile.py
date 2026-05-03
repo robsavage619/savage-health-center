@@ -34,6 +34,37 @@ def _parse_ts(v: Any) -> datetime | None:
     return None
 
 
+def _insert_lab(conn: Any, lid: str, lab: dict, ts: datetime | None, panel: str | None) -> None:
+    value = lab.get("value")
+    value_text = lab.get("value_text")
+    is_abnormal = lab.get("is_abnormal")
+    if is_abnormal is None and value is not None:
+        rl, rh = lab.get("ref_low"), lab.get("ref_high")
+        if (rl is not None and value < rl) or (rh is not None and value > rh):
+            is_abnormal = True
+    conn.execute(
+        """
+        INSERT INTO labs (id, loinc, name, value, value_text, unit, ref_low, ref_high,
+                          ref_text, panel, is_abnormal, collected_at)
+        VALUES ($id, $loinc, $name, $value, $vt, $unit, $rl, $rh, $rt, $panel, $abn, $ts)
+        """,
+        {
+            "id": lid,
+            "loinc": lab.get("loinc"),
+            "name": lab["name"],
+            "value": float(value) if value is not None else None,
+            "vt": value_text,
+            "unit": lab.get("unit"),
+            "rl": lab.get("ref_low"),
+            "rh": lab.get("ref_high"),
+            "rt": lab.get("ref_text"),
+            "panel": panel,
+            "abn": is_abnormal,
+            "ts": ts,
+        },
+    )
+
+
 def ingest_clinical_profile(yaml_path: Path | None = None) -> dict[str, int]:
     """Wipe + reload conditions, medications, labs, and vitals from YAML."""
     from shc.db.schema import get_read_conn
@@ -104,26 +135,21 @@ def ingest_clinical_profile(yaml_path: Path | None = None) -> dict[str, int]:
     # Labs — note: labs.id is opaque; clear by source_doc_id pattern via id prefix
     conn.execute("DELETE FROM labs WHERE id LIKE $p", {"p": f"{SOURCE}:%"})
     n_lab = 0
+    # Top-level `labs:` are unpaneled (legacy trended analytes).
     for lab in data.get("labs", []) or []:
         ts = _parse_ts(lab.get("collected_at"))
         lid = f"{SOURCE}:lab:{_hash(lab['name'], str(ts), str(lab.get('value')))}"
-        conn.execute(
-            """
-            INSERT INTO labs (id, loinc, name, value, unit, ref_low, ref_high, collected_at)
-            VALUES ($id, $loinc, $name, $value, $unit, $rl, $rh, $ts)
-            """,
-            {
-                "id": lid,
-                "loinc": lab.get("loinc"),
-                "name": lab["name"],
-                "value": float(lab["value"]) if lab.get("value") is not None else None,
-                "unit": lab.get("unit"),
-                "rl": lab.get("ref_low"),
-                "rh": lab.get("ref_high"),
-                "ts": ts,
-            },
-        )
+        _insert_lab(conn, lid, lab, ts, panel=None)
         n_lab += 1
+    # `panels:` group qualitative + numeric results from a single order.
+    for panel in data.get("panels", []) or []:
+        panel_name = panel["name"]
+        panel_ts = _parse_ts(panel.get("collected_at"))
+        for lab in panel.get("results", []) or []:
+            ts = _parse_ts(lab.get("collected_at")) or panel_ts
+            lid = f"{SOURCE}:lab:{_hash(panel_name, lab['name'], str(ts), str(lab.get('value')), str(lab.get('value_text')))}"
+            _insert_lab(conn, lid, lab, ts, panel=panel_name)
+            n_lab += 1
 
     # Vitals → measurements table
     conn.execute("DELETE FROM measurements WHERE source = $s", {"s": SOURCE})
