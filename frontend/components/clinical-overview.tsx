@@ -6,6 +6,7 @@ import {
   api,
   type ClinicalOverview as ClinicalOverviewData,
   type ClinicalRisk,
+  type LabPanel,
   type LabPoint,
   type RiskZone,
 } from "@/lib/api";
@@ -234,6 +235,91 @@ function LabsTable({
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ── Panel results (qualitative + numeric, grouped by order) ─────────────────
+
+function PanelsList({ panels }: { panels: LabPanel[] }) {
+  return (
+    <div className="space-y-3">
+      {panels.map((p) => {
+        const abnormalCount = p.results.filter((r) => r.is_abnormal).length;
+        return (
+          <details
+            key={`${p.panel}-${p.collected_at}`}
+            className="rounded-lg border border-[var(--hairline)] overflow-hidden group"
+            open={abnormalCount > 0}
+          >
+            <summary className="flex items-baseline justify-between gap-3 px-3 py-2 cursor-pointer select-none hover:bg-[oklch(1_0_0/0.02)]">
+              <div className="flex items-baseline gap-2">
+                <span className="text-[12px] text-[var(--text-primary)]">{p.panel}</span>
+                {abnormalCount > 0 && (
+                  <span
+                    className="text-[8.5px] uppercase tracking-[0.12em] px-1 rounded-sm"
+                    style={{
+                      background: "var(--negative-soft)",
+                      color: "var(--negative)",
+                      fontFamily: "var(--font-orbitron)",
+                    }}
+                  >
+                    {abnormalCount} abnormal
+                  </span>
+                )}
+              </div>
+              <span className="text-[10px] text-[var(--text-faint)] tabular-nums">
+                {fmtDate(p.collected_at)} · {p.results.length} results
+              </span>
+            </summary>
+            <table className="w-full text-[11.5px]" style={{ borderTop: "1px solid var(--hairline)" }}>
+              <thead className="text-[9.5px] text-[var(--text-faint)] uppercase tracking-wider">
+                <tr>
+                  <th className="px-3 py-1.5 text-left font-normal">Test</th>
+                  <th className="px-3 py-1.5 text-right font-normal">Value</th>
+                  <th className="px-3 py-1.5 text-right font-normal">Reference</th>
+                </tr>
+              </thead>
+              <tbody>
+                {p.results.map((r) => {
+                  const range = r.ref_text
+                    ? r.ref_text
+                    : r.ref_low != null && r.ref_high != null
+                      ? `${r.ref_low}–${r.ref_high}`
+                      : r.ref_high != null
+                        ? `≤${r.ref_high}`
+                        : r.ref_low != null
+                          ? `≥${r.ref_low}`
+                          : "—";
+                  const valueColor = r.is_abnormal ? "var(--negative)" : "var(--text-primary)";
+                  return (
+                    <tr key={r.name} className="border-t border-[var(--hairline)]">
+                      <td className="px-3 py-1.5 text-[var(--text-muted)]">{r.name}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">
+                        <span style={{ color: valueColor, fontWeight: r.is_abnormal ? 500 : 400 }}>
+                          {r.display}
+                        </span>
+                        {r.unit && (
+                          <span className="text-[var(--text-faint)] text-[9.5px] ml-0.5">{r.unit}</span>
+                        )}
+                        {r.is_abnormal && (
+                          <span
+                            className="ml-1 text-[8.5px] font-medium px-1 rounded-sm"
+                            style={{ background: "var(--negative-soft)", color: "var(--negative)" }}
+                          >
+                            ABN
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-1.5 text-right text-[var(--text-faint)] tabular-nums">{range}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -503,6 +589,16 @@ export function ClinicalOverview() {
         </div>
         <LabsTable data={data} overdue={risk?.overdue_labs ?? []} />
       </div>
+
+      {data?.panels && data.panels.length > 0 && (
+        <div className="shc-card p-4 space-y-3">
+          <div className="flex items-baseline justify-between">
+            <Eyebrow>Panel results</Eyebrow>
+            <span className="text-[10px] text-[var(--text-faint)]">qualitative + numeric, grouped by order</span>
+          </div>
+          <PanelsList panels={data.panels} />
+        </div>
+      )}
 
       <div className="shc-card p-4">
         <div className="flex items-baseline justify-between mb-3">

@@ -1391,6 +1391,40 @@ async def add_medication(body: MedicationIn) -> dict:
     return {"status": "ok", "name": body.name}
 
 
+def _group_panels(rows: list) -> list[dict]:
+    """Group flat panel-result rows into [{panel, collected_at, results: [...]}]."""
+    grouped: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        panel, ts, name, value, value_text, unit, rl, rh, ref_text, abn, loinc = r
+        key = (panel, str(ts) if ts else "")
+        if key not in grouped:
+            grouped[key] = {
+                "panel": panel,
+                "collected_at": str(ts) if ts else None,
+                "results": [],
+            }
+        display: str
+        if value_text is not None:
+            display = value_text
+        elif value is not None:
+            display = f"{round(float(value), 3)}"
+        else:
+            display = "—"
+        grouped[key]["results"].append({
+            "name": name,
+            "value": round(float(value), 3) if value is not None else None,
+            "value_text": value_text,
+            "display": display,
+            "unit": unit,
+            "ref_low": rl,
+            "ref_high": rh,
+            "ref_text": ref_text,
+            "is_abnormal": bool(abn) if abn is not None else False,
+            "loinc": loinc,
+        })
+    return list(grouped.values())
+
+
 @router.get("/clinical/overview")
 async def clinical_overview() -> dict:
     """Comprehensive clinical snapshot — drives the Clinical pane.
@@ -1433,6 +1467,18 @@ async def clinical_overview() -> dict:
             FROM labs
             WHERE value IS NOT NULL
             ORDER BY name, collected_at
+            """
+        ).fetchall()
+        # Panels: grouped lab results from a single order (urine dipstick,
+        # renal panel, infectious screens, etc.). Includes both numeric and
+        # qualitative results.
+        panel_rows = conn.execute(
+            """
+            SELECT panel, collected_at, name, value, value_text, unit,
+                   ref_low, ref_high, ref_text, is_abnormal, loinc
+            FROM labs
+            WHERE panel IS NOT NULL
+            ORDER BY collected_at DESC, panel, name
             """
         ).fetchall()
         # Vitals: latest per metric
@@ -1502,6 +1548,7 @@ async def clinical_overview() -> dict:
             for r in latest_labs
         ],
         "lab_history": history_by_name,
+        "panels": _group_panels(panel_rows),
         "vitals": [
             {
                 "metric": r[0],
