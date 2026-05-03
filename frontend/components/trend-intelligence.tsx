@@ -27,10 +27,21 @@ type Tab = (typeof TABS)[number];
 // RECOVERY TAB
 // ──────────────────────────────────────────────────────────────────────────
 
+function dedupeByDate<T extends { date: string }>(rows: T[]): T[] {
+  // Backend trend endpoints can return multiple rows per date when joined.
+  // Keep the last occurrence per ISO date and sort ascending.
+  const byDate = new Map<string, T>();
+  for (const r of rows) byDate.set(r.date, r);
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function RecoveryTrendPane() {
   const trend = useQuery({ queryKey: ["recovery-trend-90"], queryFn: () => api.recoveryTrend(90) });
   const hrv = useQuery({ queryKey: ["hrv-90"], queryFn: () => api.hrvTrend(90) });
   const stats = useQuery({ queryKey: ["stats-summary"], queryFn: api.statsSummary });
+
+  const trendRows = useMemo(() => dedupeByDate(trend.data ?? []), [trend.data]);
+  const hrvRows = useMemo(() => dedupeByDate(hrv.data ?? []), [hrv.data]);
 
   return (
     <div className="space-y-6">
@@ -41,10 +52,10 @@ function RecoveryTrendPane() {
         body's three pre-illness signals (RHR rise, temp rise, HRV drop) coincide.
       </p>
 
-      <RecoveryHeatmap data={trend.data ?? []} />
-      <HRVTrendCard data={hrv.data ?? []} baseline={stats.data?.hrv.baseline_28d ?? null} />
-      <PreIllnessStrip data={trend.data ?? []} hrv={hrv.data ?? []} />
-      <MonthlyAverages data={trend.data ?? []} />
+      <RecoveryHeatmap data={trendRows} />
+      <HRVTrendCard data={hrvRows} baseline={stats.data?.hrv.baseline_28d ?? null} />
+      <PreIllnessStrip data={trendRows} hrv={hrvRows} />
+      <MonthlyAverages data={trendRows} />
     </div>
   );
 }
