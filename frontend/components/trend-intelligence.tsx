@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import { api } from "@/lib/api";
 import { Eyebrow } from "@/components/ui/metric";
+import { ObsidianMark } from "@/components/obsidian-badge";
 import { CorrelationCards } from "@/components/correlation-cards";
 import { ClinicalOverview } from "@/components/clinical-overview";
 import { BodyPane } from "@/components/body-panel";
@@ -391,11 +392,19 @@ function MonthlyAverages({ data }: { data: { date: string; score: number; hrv: n
 function InsightsPane() {
   return (
     <div className="space-y-6">
-      <p className="shc-helptext">
+      <p className="shc-helptext flex items-baseline gap-1.5 flex-wrap">
         <span className="text-[var(--text-muted)]">How to read this. </span>
-        Cards on this tab synthesise your live data with research from your vault — Israetel
-        volume landmarks, Helms set progression, Gabbett ACWR — to turn raw numbers into
-        prescriptive signals.
+        <span>
+          Cards on this tab synthesise your live data with research from your
+          {" "}
+          <span className="inline-flex items-center gap-1 align-middle">
+            <ObsidianMark size={11} />
+            <span className="text-[var(--text-muted)]">Obsidian vault</span>
+          </span>
+          {" "}
+          — Israetel volume landmarks, Helms set progression, Gabbett ACWR — to turn raw numbers
+          into prescriptive signals.
+        </span>
       </p>
       <ReadinessDecomposition />
       <VolumeLandmarks />
@@ -497,7 +506,10 @@ function VolumeLandmarks() {
     <div className="rounded-lg border border-[var(--hairline)] p-4 space-y-3">
       <div className="flex items-baseline justify-between">
         <Eyebrow>Volume landmarks · weekly sets vs MEV/MAV/MRV</Eyebrow>
-        <span className="text-[10px] text-[var(--text-faint)]">Israetel · RP</span>
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--text-faint)]">
+          <ObsidianMark size={10} />
+          Israetel · RP
+        </span>
       </div>
       <div className="space-y-3">
         {groups.map((g) => {
@@ -640,7 +652,10 @@ function SleepDoseResponse() {
     <div className="rounded-lg border border-[var(--hairline)] p-4 space-y-3">
       <div className="flex items-baseline justify-between">
         <Eyebrow>Sleep dose-response · your data + research</Eyebrow>
-        <span className="text-[10px] text-[var(--text-faint)]">Walker · Watson · Roenneberg</span>
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--text-faint)]">
+          <ObsidianMark size={10} />
+          Walker · Watson · Roenneberg
+        </span>
       </div>
       <div className="h-[180px]">
         <ResponsiveContainer width="100%" height="100%">

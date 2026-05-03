@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Eyebrow } from "@/components/ui/metric";
+import { ObsidianMark, ObsidianSourceTag } from "@/components/obsidian-badge";
 
 // Highlights key biometric figures inline (HRV, sigma, scores, percentages, ACWR values)
 function HighlightFigures({ text }: { text: string }) {
@@ -95,16 +96,12 @@ function StoryNarrative({
 
       {sources && sources.length > 0 && (
         <div className="pt-3 mt-4 border-t border-[var(--hairline)]">
-          <span className="text-[10px] uppercase tracking-wider text-[var(--text-dim)] mr-2">
-            Sources
+          <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-[var(--text-dim)] mr-2 align-middle">
+            <ObsidianMark size={11} />
+            Vault sources
           </span>
           {sources.map((s, i) => (
-            <span
-              key={i}
-              className="inline-block mr-1.5 mt-1 px-2 py-0.5 rounded-full border border-[var(--hairline)] text-[10.5px] text-[var(--text-muted)]"
-            >
-              {s}
-            </span>
+            <ObsidianSourceTag key={i} source={s} />
           ))}
         </div>
       )}

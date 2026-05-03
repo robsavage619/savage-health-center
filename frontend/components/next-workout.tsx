@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { Eyebrow } from "@/components/ui/metric";
+import { ObsidianMark } from "@/components/obsidian-badge";
 import type { WorkoutPlan, WorkoutBlock, WarmupItem } from "@/lib/api";
 import { ProgressionDrawer } from "@/components/progression-drawer";
 
@@ -335,18 +336,19 @@ function VaultInsights({ insights }: { insights: string[] }) {
     <div
       className="rounded-[var(--r-md)] p-4 pl-5"
       style={{
-        background: "oklch(1 0 0 / 0.015)",
+        background: "oklch(0.65 0.2 295 / 0.04)",
         border: "1px solid var(--hairline)",
-        borderLeft: "2px solid var(--chart-line)",
+        borderLeft: "2px solid oklch(0.65 0.2 295)",
       }}
     >
       <div className="flex items-center gap-2 mb-2.5">
-        <Eyebrow>Evidence base</Eyebrow>
+        <ObsidianMark size={13} />
+        <Eyebrow>From your vault</Eyebrow>
       </div>
       <ul className="space-y-1.5">
         {insights.map((n, i) => (
           <li key={i} className="text-[12px] text-[var(--text-dim)] leading-snug flex gap-2">
-            <span className="text-[var(--chart-line)] mt-0.5 flex-shrink-0 opacity-60">·</span>
+            <span className="mt-0.5 flex-shrink-0 opacity-60" style={{ color: "oklch(0.65 0.2 295)" }}>·</span>
             {n}
           </li>
         ))}
