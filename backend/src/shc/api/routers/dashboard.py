@@ -189,6 +189,7 @@ async def state_today() -> dict:
 # ── Daily check-in (β-blocker, soreness, body weight, illness/travel flags) ──
 
 class CheckinSubmission(BaseModel):
+    date: str | None = None                     # ISO date override for backfilling past days
     propranolol_taken: bool | None = None
     body_weight_kg: float | None = None
     soreness_overall: int | None = None         # 1-10
@@ -261,6 +262,7 @@ async def post_checkin(body: CheckinSubmission) -> dict:
         if v is not None and not 1 <= v <= 10:
             raise HTTPException(status_code=422, detail=f"{k} must be 1-10")
 
+    target_date = body.date if body.date else date.today().isoformat()
     ms_json = json.dumps(body.muscle_soreness) if body.muscle_soreness is not None else None
     async with write_ctx() as conn:
         conn.execute(
@@ -269,7 +271,7 @@ async def post_checkin(body: CheckinSubmission) -> dict:
                 (date, propranolol_taken, body_weight_kg, soreness_overall,
                  sleep_quality_1_10, energy_1_10, stress_1_10, motivation_1_10,
                  illness_flag, travel_flag, notes, muscle_soreness)
-            VALUES (current_date, $prop, $wt, $sor, $sq, $en, $st, $mo, $ill, $tr, $no, $ms)
+            VALUES ($dt, $prop, $wt, $sor, $sq, $en, $st, $mo, $ill, $tr, $no, $ms)
             ON CONFLICT (date) DO UPDATE SET
                 propranolol_taken = COALESCE(EXCLUDED.propranolol_taken, daily_checkin.propranolol_taken),
                 body_weight_kg    = COALESCE(EXCLUDED.body_weight_kg, daily_checkin.body_weight_kg),
@@ -284,6 +286,7 @@ async def post_checkin(body: CheckinSubmission) -> dict:
                 muscle_soreness   = COALESCE(EXCLUDED.muscle_soreness, daily_checkin.muscle_soreness)
             """,
             {
+                "dt": target_date,
                 "prop": body.propranolol_taken,
                 "wt": body.body_weight_kg,
                 "sor": body.soreness_overall,
@@ -297,7 +300,7 @@ async def post_checkin(body: CheckinSubmission) -> dict:
                 "ms": ms_json,
             },
         )
-    return {"status": "ok", "date": date.today().isoformat()}
+    return {"status": "ok", "date": target_date}
 
 
 # ── Plan adherence (closed-loop tracking) ────────────────────────────────────
