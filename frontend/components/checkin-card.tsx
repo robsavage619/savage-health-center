@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type CheckinPayload } from "@/lib/api";
 import { Eyebrow } from "@/components/ui/metric";
@@ -22,8 +22,10 @@ export function CheckinCard() {
   const [sleepQ, setSleepQ] = useState<number | null>(null);
   const [illness, setIllness] = useState<boolean>(false);
   const [travel, setTravel] = useState<boolean>(false);
+  const [notes, setNotes] = useState<string>("");
   const [muscleSoreness, setMuscleSoreness] = useState<Soreness>({});
   const [editing, setEditing] = useState<boolean>(false);
+  const notesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const t = today.data;
@@ -36,6 +38,7 @@ export function CheckinCard() {
     setSleepQ(t.sleep_quality_1_10 ?? null);
     setIllness(!!t.illness_flag);
     setTravel(!!t.travel_flag);
+    setNotes(t.notes ?? "");
     setMuscleSoreness(t.muscle_soreness ?? {});
   }, [today.data]);
 
@@ -58,6 +61,12 @@ export function CheckinCard() {
     send({ body_weight_kg: v / 2.20462 });
   }
 
+  function handleNotesChange(v: string) {
+    setNotes(v);
+    if (notesTimer.current) clearTimeout(notesTimer.current);
+    notesTimer.current = setTimeout(() => send({ notes: v || null }), 800);
+  }
+
   const complete =
     propranolol !== null &&
     weightLbs.trim() !== "" &&
@@ -73,6 +82,7 @@ export function CheckinCard() {
         sleepQ={sleepQ}
         illness={illness}
         travel={travel}
+        notes={notes}
         onEdit={() => setEditing(true)}
       />
     );
@@ -152,6 +162,15 @@ export function CheckinCard() {
         />
       </div>
 
+      {/* Notes */}
+      <textarea
+        placeholder="Any context for today…"
+        rows={2}
+        value={notes}
+        onChange={(e) => handleNotesChange(e.target.value)}
+        className="w-full bg-transparent border border-[var(--hairline)] rounded-sm px-2.5 py-1.5 text-[11.5px] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] focus:border-[var(--hairline-strong)] focus:outline-none resize-none"
+      />
+
       {submit.isError ? (
         <p className="text-[10.5px] text-[var(--negative)] mt-1">
           {submit.error instanceof Error ? submit.error.message : "save failed"}
@@ -168,6 +187,7 @@ function CheckinLogged({
   sleepQ,
   illness,
   travel,
+  notes,
   onEdit,
 }: {
   propranolol: boolean | null;
@@ -176,6 +196,7 @@ function CheckinLogged({
   sleepQ: number | null;
   illness: boolean;
   travel: boolean;
+  notes: string;
   onEdit: () => void;
 }) {
   const stats: { label: string; value: string }[] = [
@@ -236,6 +257,12 @@ function CheckinLogged({
           ))}
         </div>
       )}
+
+      {notes && (
+        <p className="text-[11px] text-[var(--text-muted)] italic border-t border-[var(--hairline)] pt-2">
+          {notes}
+        </p>
+      )}
     </div>
   );
 }
@@ -263,7 +290,6 @@ function Slider({
 }) {
   const display = value ?? 0;
   const pct = value != null ? ((value - 1) / 9) * 100 : 0;
-  // Color shifts: low = soft green (good for soreness=low / quality=high is opposite, but visually we just want a clear scale)
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between">
