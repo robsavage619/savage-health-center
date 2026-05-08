@@ -142,15 +142,17 @@ async def sync_recovery() -> int:
                 "hrv": score.get("hrv_rmssd_milli"),
                 "rhr": score.get("resting_heart_rate"),
                 "skin_temp": score.get("skin_temp_celsius"),
+                "spo2": score.get("spo2_percentage"),
                 "content_hash": _hash(r),
             }
             conn.execute(
                 """
-                INSERT INTO recovery (id, source, date, score, hrv, rhr, skin_temp, content_hash)
-                VALUES ($id, $source, $date, $score, $hrv, $rhr, $skin_temp, $content_hash)
+                INSERT INTO recovery (id, source, date, score, hrv, rhr, skin_temp, spo2, content_hash)
+                VALUES ($id, $source, $date, $score, $hrv, $rhr, $skin_temp, $spo2, $content_hash)
                 ON CONFLICT (id) DO UPDATE SET
                     score = EXCLUDED.score, hrv = EXCLUDED.hrv, rhr = EXCLUDED.rhr,
-                    skin_temp = EXCLUDED.skin_temp, content_hash = EXCLUDED.content_hash
+                    skin_temp = EXCLUDED.skin_temp, spo2 = EXCLUDED.spo2,
+                    content_hash = EXCLUDED.content_hash
                 WHERE EXCLUDED.content_hash != recovery.content_hash
                 """,
                 row,
@@ -164,28 +166,63 @@ async def sync_sleep() -> int:
     async with write_ctx() as conn:
         for r in records:
             score = r.get("score") or {}
-            stage_summary = score.get("stage_summary", {})
+            ss = score.get("stage_summary") or {}
+            needed = score.get("sleep_needed") or {}
             external_id = str(r["id"])
+
+            def _ms_to_min(ms: int | None) -> float | None:
+                return round(ms / 60_000, 1) if ms else None
+
             row = {
                 "id": external_id,
                 "source": "whoop",
                 "night_date": r.get("start", "")[:10],
                 "ts_in": r.get("start"),
                 "ts_out": r.get("end"),
-                "stages_json": str(stage_summary),
-                "spo2_avg": None,  # not in v2 sleep; available in recovery score
+                "stages_json": str(ss),
+                "spo2_avg": None,
                 "rhr": score.get("respiratory_rate"),
                 "hrv": None,
+                "is_nap": bool(r.get("nap")),
+                "sleep_performance_pct": score.get("sleep_performance_percentage"),
+                "sleep_efficiency_pct": score.get("sleep_efficiency_percentage"),
+                "sleep_consistency_pct": score.get("sleep_consistency_percentage"),
+                "disturbance_count": ss.get("disturbance_count"),
+                "sleep_needed_min": _ms_to_min(
+                    (needed.get("baseline_milli") or 0) + (needed.get("need_from_sleep_debt_milli") or 0) + (needed.get("need_from_recent_strain_milli") or 0)
+                ),
+                "sws_min": _ms_to_min(ss.get("total_slow_wave_sleep_time_milli")),
+                "rem_min": _ms_to_min(ss.get("total_rem_sleep_time_milli")),
+                "light_min": _ms_to_min(ss.get("total_light_sleep_time_milli")),
+                "awake_min": _ms_to_min(ss.get("total_awake_time_milli")),
                 "content_hash": _hash(r),
             }
             conn.execute(
                 """
                 INSERT INTO sleep (id, source, night_date, ts_in, ts_out, stages_json,
-                                   spo2_avg, rhr, hrv, content_hash)
+                                   spo2_avg, rhr, hrv,
+                                   is_nap, sleep_performance_pct, sleep_efficiency_pct,
+                                   sleep_consistency_pct, disturbance_count, sleep_needed_min,
+                                   sws_min, rem_min, light_min, awake_min,
+                                   content_hash)
                 VALUES ($id, $source, $night_date, $ts_in, $ts_out, $stages_json,
-                        $spo2_avg, $rhr, $hrv, $content_hash)
+                        $spo2_avg, $rhr, $hrv,
+                        $is_nap, $sleep_performance_pct, $sleep_efficiency_pct,
+                        $sleep_consistency_pct, $disturbance_count, $sleep_needed_min,
+                        $sws_min, $rem_min, $light_min, $awake_min,
+                        $content_hash)
                 ON CONFLICT (id) DO UPDATE SET
-                    stages_json = EXCLUDED.stages_json, spo2_avg = EXCLUDED.spo2_avg,
+                    stages_json = EXCLUDED.stages_json,
+                    is_nap = EXCLUDED.is_nap,
+                    sleep_performance_pct = EXCLUDED.sleep_performance_pct,
+                    sleep_efficiency_pct = EXCLUDED.sleep_efficiency_pct,
+                    sleep_consistency_pct = EXCLUDED.sleep_consistency_pct,
+                    disturbance_count = EXCLUDED.disturbance_count,
+                    sleep_needed_min = EXCLUDED.sleep_needed_min,
+                    sws_min = EXCLUDED.sws_min,
+                    rem_min = EXCLUDED.rem_min,
+                    light_min = EXCLUDED.light_min,
+                    awake_min = EXCLUDED.awake_min,
                     content_hash = EXCLUDED.content_hash
                 WHERE EXCLUDED.content_hash != sleep.content_hash
                 """,
@@ -335,6 +372,39 @@ async def sync_workout() -> int:
     return len(records)
 
 
+async def sync_cycle() -> int:
+    """Fetch daily cycle records (strain, kcal, avg/max HR) and upsert into daily_cycle."""
+    records = await _paginate("/v2/cycle")
+    async with write_ctx() as conn:
+        for r in records:
+            score = r.get("score") or {}
+            if r.get("score_state") not in ("SCORED", "PENDING_SCORE"):
+                continue
+            row = {
+                "id": str(r["id"]),
+                "date": r.get("start", "")[:10],
+                "strain": score.get("strain"),
+                "kilojoule": score.get("kilojoule"),
+                "avg_hr": score.get("average_heart_rate"),
+                "max_hr": score.get("max_heart_rate"),
+                "content_hash": _hash(r),
+            }
+            conn.execute(
+                """
+                INSERT INTO daily_cycle (id, date, strain, kilojoule, avg_hr, max_hr, content_hash)
+                VALUES ($id, $date, $strain, $kilojoule, $avg_hr, $max_hr, $content_hash)
+                ON CONFLICT (id) DO UPDATE SET
+                    strain = EXCLUDED.strain, kilojoule = EXCLUDED.kilojoule,
+                    avg_hr = EXCLUDED.avg_hr, max_hr = EXCLUDED.max_hr,
+                    content_hash = EXCLUDED.content_hash
+                WHERE EXCLUDED.content_hash != daily_cycle.content_hash
+                """,
+                row,
+            )
+    log.info("synced %d WHOOP cycle records", len(records))
+    return len(records)
+
+
 async def sync_all() -> dict[str, int]:
     """Full sync — called by APScheduler every 30 min.
 
@@ -345,6 +415,7 @@ async def sync_all() -> dict[str, int]:
         recovery_n = await sync_recovery()
         sleep_n = await sync_sleep()
         workout_n = await sync_workout()
+        cycle_n = await sync_cycle()
         async with write_ctx() as conn:
             conn.execute(
                 "INSERT INTO oauth_state (source, last_sync_at, needs_reauth) "
@@ -352,7 +423,7 @@ async def sync_all() -> dict[str, int]:
                 "SET last_sync_at = EXCLUDED.last_sync_at, needs_reauth = FALSE",
                 {"ts": datetime.now(UTC).isoformat()},
             )
-        return {"recovery": recovery_n, "sleep": sleep_n, "workout": workout_n}
+        return {"recovery": recovery_n, "sleep": sleep_n, "workout": workout_n, "cycle": cycle_n}
     except Exception:
         log.exception("WHOOP sync failed")
         async with write_ctx() as conn:
