@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import secrets
@@ -13,6 +14,10 @@ from shc.config import settings
 from shc.db.schema import write_ctx
 
 
+class WHOOPAuthError(RuntimeError):
+    """Raised when WHOOP tokens are invalid/expired and re-authorization is required."""
+
+
 def _client_id() -> str:
     return load_token("whoop", "client_id") or settings.whoop_client_id or ""
 
@@ -21,6 +26,7 @@ def _client_secret() -> str:
     return load_token("whoop", "client_secret") or settings.whoop_client_secret or ""
 
 log = logging.getLogger(__name__)
+_refresh_lock = asyncio.Lock()
 
 WHOOP_BASE = "https://api.prod.whoop.com/developer"
 AUTH_URL = "https://api.prod.whoop.com/oauth/oauth2/auth"
@@ -65,25 +71,29 @@ async def exchange_code(code: str, state: str) -> None:
 
 
 async def _refresh() -> str:
-    refresh = load_token("whoop", "refresh_token")
-    if not refresh:
-        raise RuntimeError("No WHOOP refresh token — run OAuth flow first")
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            TOKEN_URL,
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": refresh,
-                "client_id": _client_id(),
-                "client_secret": _client_secret(),
-            },
-        )
+    """Refresh the access token. Serialised via _refresh_lock to prevent rotating-token races."""
+    async with _refresh_lock:
+        refresh = load_token("whoop", "refresh_token")
+        if not refresh:
+            raise WHOOPAuthError("No WHOOP refresh token — run OAuth flow first")
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                TOKEN_URL,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh,
+                    "client_id": _client_id(),
+                    "client_secret": _client_secret(),
+                },
+            )
+        if resp.status_code in (400, 401):
+            raise WHOOPAuthError(f"WHOOP refresh rejected ({resp.status_code}) — re-authorization required")
         resp.raise_for_status()
-    tokens = resp.json()
-    store_token("whoop", "access_token", tokens["access_token"])
-    store_token("whoop", "refresh_token", tokens["refresh_token"])
-    log.info("WHOOP tokens refreshed")
-    return tokens["access_token"]
+        tokens = resp.json()
+        store_token("whoop", "access_token", tokens["access_token"])
+        store_token("whoop", "refresh_token", tokens["refresh_token"])
+        log.info("WHOOP tokens refreshed")
+        return tokens["access_token"]
 
 
 async def _get(path: str, params: dict | None = None) -> dict:
@@ -406,10 +416,10 @@ async def sync_cycle() -> int:
 
 
 async def sync_all() -> dict[str, int]:
-    """Full sync — called by APScheduler every 30 min.
+    """Full sync — called by APScheduler 2x/day.
 
-    Returns:
-        dict with ``recovery``, ``sleep``, ``workout`` record counts.
+    Only sets needs_reauth on WHOOPAuthError. Transient failures (429, network
+    errors, etc.) are logged but do not trigger the reauth banner.
     """
     try:
         recovery_n = await sync_recovery()
@@ -424,11 +434,14 @@ async def sync_all() -> dict[str, int]:
                 {"ts": datetime.now(UTC).isoformat()},
             )
         return {"recovery": recovery_n, "sleep": sleep_n, "workout": workout_n, "cycle": cycle_n}
-    except Exception:
-        log.exception("WHOOP sync failed")
+    except WHOOPAuthError:
+        log.exception("WHOOP auth error — marking needs_reauth")
         async with write_ctx() as conn:
             conn.execute(
                 "INSERT INTO oauth_state (source, needs_reauth) VALUES ('whoop', TRUE) "
                 "ON CONFLICT (source) DO UPDATE SET needs_reauth = TRUE"
             )
+        raise
+    except Exception:
+        log.exception("WHOOP sync failed (transient) — not marking needs_reauth")
         raise
