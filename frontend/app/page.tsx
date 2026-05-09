@@ -6,6 +6,8 @@ import { PillarSleep } from "@/components/pillar-sleep";
 import { PillarTrainingLoad } from "@/components/pillar-training-load";
 import { PeriodizationStrip } from "@/components/periodization-strip";
 import { AfterActionPanel } from "@/components/after-action-panel";
+import { ClinicalResearchPanel } from "@/components/clinical-research-panel";
+import { LabPanel } from "@/components/lab-panel";
 import { FuelingPanel } from "@/components/fueling-panel";
 import { StrengthPanel } from "@/components/strength-panel";
 import { TrendIntelligence } from "@/components/trend-intelligence";
@@ -100,8 +102,16 @@ export default function Dashboard() {
             <AfterActionPanel />
           </ErrorBoundary>
 
+          <ErrorBoundary label="Clinical research">
+            <ClinicalResearchPanel />
+          </ErrorBoundary>
+
           <ErrorBoundary label="Fueling">
             <FuelingPanel />
+          </ErrorBoundary>
+
+          <ErrorBoundary label="Research lab">
+            <LabPanel />
           </ErrorBoundary>
 
           <ErrorBoundary label="Strength">

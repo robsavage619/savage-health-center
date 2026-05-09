@@ -659,6 +659,48 @@ export const api = {
       notes: string | null;
       volume_targets: Record<string, { mev: number; mav: number; mrv: number }>;
     }>("/api/training/mesocycle"),
+  clinicalResearch: () =>
+    get<{
+      as_of: string;
+      sleep_regularity_index: { value: number | null; interpretation: string | null; ref: string };
+      ln_rmssd: { today: number | null; avg_4w: number | null; delta: number | null; cv_pct_7d: number | null; ref: string };
+      recovery_deficit_streak: { consecutive_red_days: number; alarm: boolean; ref: string };
+      allostatic_load: {
+        score_0_10: number | null;
+        components: Record<string, number>;
+        n_markers: number;
+        interpretation: string | null;
+        ref: string;
+      };
+      hrv_drug_adjusted: {
+        raw: number | null;
+        adjusted: number | null;
+        factor: number;
+        active_drugs: string[];
+        ref: string;
+      };
+      z2_hr_consistency: { cv_pct: number | null; interpretation: string | null; ref: string };
+    }>("/api/clinical-research/insights"),
+  labFindings: () =>
+    get<{
+      id: string;
+      title: string;
+      hypothesis: string;
+      vault_ref: string | null;
+      test_type: string;
+      run_at: string | null;
+      n: number | null;
+      effect_size: number | null;
+      effect_unit: string | null;
+      p_value: number | null;
+      verdict: "confirmed" | "refuted" | "insufficient" | "inconclusive" | null;
+      summary: string | null;
+    }[]>("/api/lab/findings"),
+  labRun: async () => {
+    const r = await fetch(`${BASE}/api/lab/run`, { method: "POST" });
+    if (!r.ok) throw new Error(`labRun ${r.status}`);
+    return r.json() as Promise<{ ran: number; verdicts: Record<string, string>; completed_at: string }>;
+  },
   afterAction: () =>
     get<{
       as_of: string;

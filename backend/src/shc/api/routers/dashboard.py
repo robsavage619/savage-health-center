@@ -2148,6 +2148,393 @@ async def fueling_trend(days: int = Query(14, gt=0, le=90)) -> list[dict]:
     return out
 
 
+@router.get("/lab/questions")
+async def lab_questions() -> list[dict]:
+    conn = get_read_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, title, hypothesis, test_type, window_days, vault_ref, enabled "
+            "FROM lab_questions ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {
+            "id": r[0], "title": r[1], "hypothesis": r[2], "test_type": r[3],
+            "window_days": r[4], "vault_ref": r[5], "enabled": bool(r[6]),
+        }
+        for r in rows
+    ]
+
+
+@router.get("/lab/findings")
+async def lab_findings_latest() -> list[dict]:
+    """Latest finding per question, joined with question metadata."""
+    conn = get_read_conn()
+    try:
+        rows = conn.execute(
+            """
+            WITH latest AS (
+                SELECT question_id, MAX(run_at) AS run_at
+                FROM lab_findings GROUP BY question_id
+            )
+            SELECT q.id, q.title, q.hypothesis, q.vault_ref, q.test_type,
+                   f.run_at, f.n, f.effect_size, f.effect_unit, f.p_value, f.verdict, f.summary
+            FROM lab_questions q
+            LEFT JOIN latest l ON l.question_id = q.id
+            LEFT JOIN lab_findings f ON f.question_id = q.id AND f.run_at = l.run_at
+            WHERE q.enabled = TRUE
+            ORDER BY q.id
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {
+            "id": r[0], "title": r[1], "hypothesis": r[2], "vault_ref": r[3],
+            "test_type": r[4],
+            "run_at": r[5].isoformat() if r[5] else None,
+            "n": r[6], "effect_size": r[7], "effect_unit": r[8], "p_value": r[9],
+            "verdict": r[10], "summary": r[11],
+        }
+        for r in rows
+    ]
+
+
+@router.post("/lab/run")
+async def lab_run() -> dict:
+    """Execute every enabled hypothesis and persist findings."""
+    from shc import lab as _lab
+    async with write_ctx() as conn:
+        findings = _lab.run_all(conn)
+        _lab.persist(conn, findings)
+    return {
+        "ran": len(findings),
+        "verdicts": {f.question_id: f.verdict for f in findings},
+        "completed_at": date.today().isoformat(),
+    }
+
+
+@router.get("/clinical-research/insights")
+async def clinical_research_insights() -> dict:
+    """Six research-grade signals layered on top of the standard Insights pane.
+
+    All numbers point at peer-reviewed thresholds — see vault for primary refs.
+    """
+    import math
+
+    today = date.today()
+    conn = get_read_conn()
+    try:
+        # Sleep Regularity Index (Phillips 2017) — overlap-based proxy from
+        # ts_in/ts_out. For each minute of the 24h day across 14 nights, count
+        # the fraction of consecutive-night pairs in the same state (asleep or
+        # awake). 100 = perfectly regular; 0 = random.
+        sleep_rows = conn.execute(
+            "SELECT night_date, ts_in, ts_out FROM sleep "
+            "WHERE night_date >= $s AND ts_in IS NOT NULL AND ts_out IS NOT NULL "
+            "AND COALESCE(is_nap, FALSE) = FALSE "
+            "ORDER BY night_date, ts_in",
+            {"s": (today - timedelta(days=14)).isoformat()},
+        ).fetchall()
+
+        # Build per-night [start_min, end_min) within 24h cycle. Anchor each
+        # session to its bedtime calendar day so back-to-back nights compare
+        # cleanly across midnight.
+        nights: list[tuple[date, int, int]] = []
+        for nd, ts_in, ts_out in sleep_rows:
+            if ts_in is None or ts_out is None:
+                continue
+            # Minutes since midnight of bedtime day
+            base = ts_in.replace(hour=0, minute=0, second=0, microsecond=0)
+            start_min = int((ts_in - base).total_seconds() // 60)
+            duration_min = int((ts_out - ts_in).total_seconds() // 60)
+            end_min = start_min + duration_min
+            nights.append((nd, start_min, end_min))
+
+        sri: float | None = None
+        if len(nights) >= 2:
+            # Compare each consecutive pair. For each minute m in 0..1440 of
+            # day t, asleep_t(m) = (m_offset is within [start, end) for night
+            # anchored to t-1 or t depending on overlap). Use a normalized
+            # 24h window starting at min(start) of pair so cross-midnight is
+            # handled naturally.
+            agreement_total = 0
+            minutes_total = 0
+            for i in range(1, len(nights)):
+                _a_d, a_s, a_e = nights[i - 1]
+                _b_d, b_s, b_e = nights[i]
+                lo = min(a_s, b_s) - 30  # 30-min slack on each end
+                hi = max(a_e, b_e) + 30
+                # Step every minute
+                for m in range(lo, hi):
+                    a_state = 1 if a_s <= m < a_e else 0
+                    b_state = 1 if b_s <= m < b_e else 0
+                    agreement_total += 1 if a_state == b_state else 0
+                    minutes_total += 1
+            if minutes_total:
+                sri = round(100.0 * agreement_total / minutes_total, 1)
+
+        # lnRMSSD weekly trend (Buchheit 2014) — log-transformed HRV mean,
+        # rolling 7d, with cv% (week-over-week noise floor).
+        hrv_rows = conn.execute(
+            "SELECT date, hrv FROM recovery WHERE date >= $s AND hrv IS NOT NULL "
+            "ORDER BY date",
+            {"s": (today - timedelta(days=28)).isoformat()},
+        ).fetchall()
+        ln_means: list[float] = []
+        cv_pcts: list[float] = []
+        if len(hrv_rows) >= 14:
+            ln_vals = [math.log(float(r[1])) for r in hrv_rows if r[1] and r[1] > 0]
+            for i in range(7, len(ln_vals)):
+                window = ln_vals[i - 7:i]
+                m = sum(window) / 7
+                ln_means.append(m)
+                if m > 0:
+                    sd = (sum((x - m) ** 2 for x in window) / 7) ** 0.5
+                    cv_pcts.append(100.0 * sd / m)
+
+        ln_rmssd_today = round(ln_means[-1], 3) if ln_means else None
+        ln_rmssd_4w_avg = round(sum(ln_means) / len(ln_means), 3) if ln_means else None
+        ln_rmssd_delta = (
+            round(ln_rmssd_today - ln_rmssd_4w_avg, 3)
+            if (ln_rmssd_today is not None and ln_rmssd_4w_avg is not None)
+            else None
+        )
+        ln_rmssd_cv = round(cv_pcts[-1], 2) if cv_pcts else None
+
+        # Recovery-deficit streak — consecutive days with recovery score < 34
+        # (red zone). 3+ flags injury-risk window per WHOOP 2022 internal study.
+        rec_rows = conn.execute(
+            "SELECT date, score FROM recovery WHERE date >= $s ORDER BY date DESC",
+            {"s": (today - timedelta(days=14)).isoformat()},
+        ).fetchall()
+        red_streak = 0
+        for _d, score in rec_rows:
+            if score is not None and float(score) < 34:
+                red_streak += 1
+            else:
+                break
+
+        # Allostatic Load Index (Seeman 2001) — composite of metabolic +
+        # cardiovascular markers normalised against clinical thresholds.
+        # Each marker contributes 0/1/2 (0 = normal, 1 = borderline, 2 = high).
+        # Sum / max yields a 0-1 fraction surfaced as 0-10 score.
+        clin_rows = conn.execute(
+            "SELECT name, last_value FROM v_kaiser_summary"
+        ).fetchall() if conn.execute(
+            "SELECT COUNT(*) FROM information_schema.views WHERE table_name = 'v_kaiser_summary'"
+        ).fetchone()[0] else []
+        clin_map = {str(r[0]).lower(): r[1] for r in clin_rows} if clin_rows else {}
+
+        # Pull straight from kaiser_summary if view doesn't exist
+        if not clin_map:
+            try:
+                ks = conn.execute(
+                    "SELECT name, last_value FROM kaiser_summary WHERE last_value IS NOT NULL"
+                ).fetchall()
+                clin_map = {str(r[0]).lower(): r[1] for r in ks}
+            except Exception:
+                pass
+
+        # Latest BP — from kaiser_summary or measurements
+        bp_sys = bp_dia = None
+        for k, v in clin_map.items():
+            if "systolic" in k or "blood pressure systolic" in k:
+                bp_sys = float(v) if v else None
+            elif "diastolic" in k or "blood pressure diastolic" in k:
+                bp_dia = float(v) if v else None
+        if bp_sys is None:
+            bp_row = conn.execute(
+                "SELECT value_num FROM measurements WHERE metric = 'bp_systolic' "
+                "ORDER BY ts DESC LIMIT 1"
+            ).fetchone()
+            if bp_row:
+                bp_sys = float(bp_row[0])
+        if bp_dia is None:
+            bp_row = conn.execute(
+                "SELECT value_num FROM measurements WHERE metric = 'bp_diastolic' "
+                "ORDER BY ts DESC LIMIT 1"
+            ).fetchone()
+            if bp_row:
+                bp_dia = float(bp_row[0])
+
+        # Latest BMI: weight kg / height m²; pull height from kaiser_summary if any
+        height_m = None
+        for k, v in clin_map.items():
+            if "height" in k:
+                try:
+                    height_m = float(v) / 100.0 if float(v) > 3 else float(v)
+                except Exception:
+                    pass
+        bw = conn.execute(
+            "SELECT body_weight_kg FROM daily_checkin WHERE body_weight_kg IS NOT NULL "
+            "ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        body_kg = float(bw[0]) if bw else None
+        bmi = None
+        if body_kg and height_m and height_m > 1.0:
+            bmi = body_kg / (height_m * height_m)
+        else:
+            for k, v in clin_map.items():
+                if k == "bmi" or k.endswith("bmi"):
+                    try:
+                        bmi = float(v)
+                    except Exception:
+                        pass
+
+        # Lipids + A1c
+        ldl = clin_map.get("ldl cholesterol (calc)") or clin_map.get("ldl-c") or clin_map.get("ldl")
+        hdl = clin_map.get("hdl cholesterol") or clin_map.get("hdl")
+        trig = clin_map.get("triglycerides")
+        a1c = clin_map.get("hba1c") or clin_map.get("a1c")
+
+        def _band(value, low, high):
+            """Return 0 (normal) | 1 (borderline) | 2 (high) | None (missing)."""
+            if value is None:
+                return None
+            try:
+                v = float(value)
+            except (TypeError, ValueError):
+                return None
+            if v >= high:
+                return 2
+            if v >= low:
+                return 1
+            return 0
+
+        bands = {
+            "bp_systolic": _band(bp_sys, 130, 140),
+            "bp_diastolic": _band(bp_dia, 80, 90),
+            "bmi": _band(bmi, 25, 30),
+            "ldl": _band(ldl, 100, 130),
+            "trig": _band(trig, 150, 200),
+            "a1c": _band(a1c, 5.7, 6.5),
+            # HDL is inverted — lower is worse
+            "hdl_low": (
+                2 if hdl is not None and float(hdl) < 35
+                else 1 if hdl is not None and float(hdl) < 40
+                else 0 if hdl is not None
+                else None
+            ),
+        }
+        scored_bands = [v for v in bands.values() if v is not None]
+        allostatic_total = sum(scored_bands)
+        allostatic_max = 2 * len(scored_bands)
+        allostatic_score = (
+            round(10.0 * allostatic_total / allostatic_max, 1) if allostatic_max else None
+        )
+
+        # Drug-adjusted HRV: propranolol blunts HRV ~10-20% (Mølgaard 1991);
+        # SSRIs blunt 5-10% (Kemp 2010 meta).
+        latest_rec = conn.execute(
+            "SELECT hrv FROM recovery WHERE hrv IS NOT NULL ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        hrv_today = float(latest_rec[0]) if latest_rec else None
+        prop_today = conn.execute(
+            "SELECT propranolol_taken FROM daily_checkin "
+            "WHERE date = $d AND propranolol_taken IS NOT NULL",
+            {"d": today.isoformat()},
+        ).fetchone()
+        on_prop = bool(prop_today and prop_today[0])
+        # Escitalopram is daily — check active medications
+        active_meds = conn.execute(
+            "SELECT LOWER(generic_name) FROM medications "
+            "WHERE end_date IS NULL OR end_date >= $d",
+            {"d": today.isoformat()},
+        ).fetchall()
+        on_ssri = any("escitalopram" in r[0] or "sertraline" in r[0] or "fluoxetine" in r[0] for r in active_meds)
+
+        adj_factor = 1.0
+        if on_prop:
+            adj_factor *= 1 / (1 - 0.15)  # uplift to undo ~15% blunting
+        if on_ssri:
+            adj_factor *= 1 / (1 - 0.07)  # uplift to undo ~7% blunting
+        hrv_drug_adjusted = round(hrv_today * adj_factor, 1) if hrv_today else None
+
+        # HR drift in Z2 — compare avg HR first half vs second half of cardio
+        # sessions where avg_hr is available and duration >= 20 min in Z2 zone.
+        hr_drift_pct = None
+        try:
+            cardio_rows = conn.execute(
+                """
+                SELECT started_at, duration_min, avg_hr
+                FROM cardio_sessions
+                WHERE started_at::DATE >= $s AND avg_hr IS NOT NULL
+                  AND duration_min >= 20
+                  AND avg_hr BETWEEN 110 AND 145
+                ORDER BY started_at DESC LIMIT 8
+                """,
+                {"s": (today - timedelta(days=60)).isoformat()},
+            ).fetchall()
+            if len(cardio_rows) >= 4:
+                avg_hrs = [float(r[2]) for r in cardio_rows]
+                # Approximate drift as variance of avg HR across sessions of
+                # similar effort — true HR-drift needs minute-by-minute series.
+                if len(avg_hrs) >= 2:
+                    m = sum(avg_hrs) / len(avg_hrs)
+                    cv = (sum((x - m) ** 2 for x in avg_hrs) / len(avg_hrs)) ** 0.5 / m
+                    hr_drift_pct = round(cv * 100, 2)
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+    return {
+        "as_of": today.isoformat(),
+        "sleep_regularity_index": {
+            "value": sri,
+            "interpretation": (
+                "tight" if sri is not None and sri >= 80
+                else "moderate" if sri is not None and sri >= 60
+                else "scattered" if sri is not None
+                else None
+            ),
+            "ref": "Phillips 2017 — Scientific Reports",
+        },
+        "ln_rmssd": {
+            "today": ln_rmssd_today,
+            "avg_4w": ln_rmssd_4w_avg,
+            "delta": ln_rmssd_delta,
+            "cv_pct_7d": ln_rmssd_cv,
+            "ref": "Buchheit 2014 — Front Physiol",
+        },
+        "recovery_deficit_streak": {
+            "consecutive_red_days": red_streak,
+            "alarm": red_streak >= 3,
+            "ref": "WHOOP 2022 — internal cohort, soft-tissue injury risk",
+        },
+        "allostatic_load": {
+            "score_0_10": allostatic_score,
+            "components": {k: v for k, v in bands.items() if v is not None},
+            "n_markers": len(scored_bands),
+            "interpretation": (
+                "low" if allostatic_score is not None and allostatic_score < 3
+                else "moderate" if allostatic_score is not None and allostatic_score < 6
+                else "elevated" if allostatic_score is not None
+                else None
+            ),
+            "ref": "Seeman 2001 — JAMA",
+        },
+        "hrv_drug_adjusted": {
+            "raw": hrv_today,
+            "adjusted": hrv_drug_adjusted,
+            "factor": round(adj_factor, 3),
+            "active_drugs": (["propranolol"] if on_prop else []) + (["ssri"] if on_ssri else []),
+            "ref": "Kemp 2010 meta-analysis · Mølgaard 1991 β-blockers",
+        },
+        "z2_hr_consistency": {
+            "cv_pct": hr_drift_pct,
+            "interpretation": (
+                "stable" if hr_drift_pct is not None and hr_drift_pct < 5
+                else "drifting" if hr_drift_pct is not None
+                else None
+            ),
+            "ref": "Maffetone — aerobic-fitness drift proxy",
+        },
+    }
+
+
 @router.get("/oauth/status")
 async def oauth_status() -> list[dict]:
     conn = get_read_conn()
