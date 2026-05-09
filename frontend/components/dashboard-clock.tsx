@@ -7,20 +7,64 @@ export function DashboardClock() {
 
   useEffect(() => {
     setNow(new Date());
-    const id = setInterval(() => setNow(new Date()), 60_000);
+    const id = setInterval(() => setNow(new Date()), 1_000);
     return () => clearInterval(id);
   }, []);
 
   if (!now) return null;
 
-  const dayLabel = now.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
-  const timeLabel = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const weekday = now.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
+  const day = String(now.getDate()).padStart(2, "0");
+  const month = now.toLocaleDateString("en-US", { month: "short" }).toUpperCase();
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const seconds = String(now.getSeconds()).padStart(2, "0");
 
   return (
-    <div className="text-[11px] text-[var(--text-dim)] tabular-nums flex gap-3">
-      <span>{dayLabel}</span>
-      <span className="text-[var(--text-faint)]">·</span>
-      <span>{timeLabel}</span>
+    <div className="flex flex-col items-end gap-0.5 select-none">
+      {/* Date eyebrow */}
+      <div
+        style={{
+          fontFamily: "var(--font-orbitron)",
+          fontSize: 9,
+          fontWeight: 500,
+          letterSpacing: "0.22em",
+          color: "var(--text-dim)",
+        }}
+      >
+        {weekday}&nbsp;·&nbsp;{day}&nbsp;{month}
+      </div>
+
+      {/* Time readout */}
+      <div className="flex items-baseline gap-[3px]">
+        <span
+          style={{
+            fontFamily: "var(--font-orbitron)",
+            fontSize: 22,
+            fontWeight: 900,
+            letterSpacing: "0.06em",
+            lineHeight: 1,
+            color: "var(--text-primary)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {hours}:{minutes}
+        </span>
+        <span
+          style={{
+            fontFamily: "var(--font-orbitron)",
+            fontSize: 11,
+            fontWeight: 500,
+            letterSpacing: "0.06em",
+            lineHeight: 1,
+            color: "var(--text-faint)",
+            fontVariantNumeric: "tabular-nums",
+            marginBottom: 1,
+          }}
+        >
+          {seconds}
+        </span>
+      </div>
     </div>
   );
 }
