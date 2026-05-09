@@ -113,7 +113,7 @@ function HeatmapCell({ cell }: { cell: { date: string; score: number } | null })
   if (!cell) {
     return (
       <div
-        className="h-[14px] rounded-[2px] flex-1"
+        className="h-[14px] w-full rounded-[2px]"
         style={{ background: "transparent", border: "1px dashed var(--hairline)" }}
       />
     );
@@ -123,7 +123,7 @@ function HeatmapCell({ cell }: { cell: { date: string; score: number } | null })
   return (
     <div
       title={`${cell.date} · recovery ${cell.score.toFixed(0)}`}
-      className="h-[14px] rounded-[2px] flex-1 transition-transform hover:scale-110"
+      className="h-[14px] w-full rounded-[2px] transition-transform hover:scale-110"
       style={{
         background: fill,
         boxShadow: sub34 ? `inset 0 0 0 1px ${ring}` : undefined,
