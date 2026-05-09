@@ -10,6 +10,8 @@ import { RightRail } from "@/components/right-rail";
 import { AdvisorChat } from "@/components/advisor-chat";
 import { SyncStatus } from "@/components/sync-status";
 import { DashboardClock } from "@/components/dashboard-clock";
+import { LiveBadge } from "@/components/live-badge";
+import { AmbientHue } from "@/components/ambient-hue";
 import { NextWorkoutCard } from "@/components/next-workout-card";
 import { CardioPanel } from "@/components/cardio-panel";
 import { WhoopVitals } from "@/components/whoop-vitals";
@@ -18,6 +20,7 @@ import { ErrorBoundary } from "@/components/error-boundary";
 export default function Dashboard() {
   return (
     <main className="min-h-screen px-5 pb-20 pt-6 max-w-[1600px] mx-auto">
+      <AmbientHue />
       <header className="flex items-end justify-between pb-5 border-b border-[var(--hairline)] mb-5">
         <div className="flex flex-col gap-2">
           <div className="flex items-baseline gap-3">
@@ -26,10 +29,7 @@ export default function Dashboard() {
               <span className="sl-wordmark-labs">Labs</span>
             </h1>
             <span className="sl-wordmark-beta">β</span>
-            <span className="sl-live-badge">
-              <span className="sl-live-dot" />
-              live
-            </span>
+            <LiveBadge />
           </div>
           <div className="sl-wordmark-bar" />
         </div>

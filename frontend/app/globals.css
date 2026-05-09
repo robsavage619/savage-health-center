@@ -28,6 +28,12 @@
   --sl-accent-glow: 0 0 8px oklch(0.72 0.20 210), 0 0 24px oklch(0.60 0.22 210 / 0.7), 0 0 48px oklch(0.50 0.22 210 / 0.35);
   --sl-accent-teal: oklch(0.72 0.18 185);
 
+  /* ── Ambient (state-reactive) ───────────── */
+  /* Hue in oklch hue degrees: 145=green, 75=amber, 25=red, 210=brand. Updated by <AmbientHue>. */
+  --ambient-hue: 210;
+  --ambient-chroma: 0.14;
+  --ambient-strength: 0.14;
+
   /* ── Semantic (recovery / performance) ──── */
   --positive: oklch(0.72 0.18 145);
   --neutral:  oklch(0.75 0.18 75);
@@ -90,22 +96,30 @@ body::before {
   inset: 0;
   z-index: -1;
   pointer-events: none;
+  transition: background 1200ms ease;
   background:
+    /* Reactive recovery wash — top-left bloom uses ambient hue */
     radial-gradient(ellipse 80% 60% at 18% -10%,
-      oklch(0.40 0.18 210 / 0.20) 0%,
-      oklch(0.28 0.14 210 / 0.09) 35%,
+      oklch(0.42 var(--ambient-chroma) var(--ambient-hue) / calc(var(--ambient-strength) * 1.4)) 0%,
+      oklch(0.30 calc(var(--ambient-chroma) * 0.7) var(--ambient-hue) / calc(var(--ambient-strength) * 0.6)) 35%,
       transparent 70%),
     radial-gradient(ellipse 70% 55% at 92% 8%,
       oklch(0.38 0.16 240 / 0.15) 0%,
       oklch(0.28 0.12 240 / 0.07) 40%,
       transparent 75%),
+    /* Reactive lower bloom — also ambient hue */
     radial-gradient(ellipse 100% 70% at 50% 110%,
-      oklch(0.35 0.14 195 / 0.10) 0%,
+      oklch(0.36 calc(var(--ambient-chroma) * 0.85) var(--ambient-hue) / calc(var(--ambient-strength) * 0.7)) 0%,
       transparent 65%),
     var(--bg);
 }
-/* Faint scanline grid for the deep-future register; opt-in via .shc-grid-bg */
-.shc-grid-bg::after {
+
+/* Faint scanline grid — global, slow parallax drift (no opt-in needed) */
+@keyframes shc-grid-drift {
+  0%   { background-position: 0 0, 0 0; }
+  100% { background-position: 64px 64px, 64px 64px; }
+}
+body::after {
   content: "";
   position: fixed;
   inset: 0;
@@ -115,8 +129,13 @@ body::before {
   background-image:
     linear-gradient(to right, oklch(1 0 0) 1px, transparent 1px),
     linear-gradient(to bottom, oklch(1 0 0) 1px, transparent 1px);
-  background-size: 64px 64px;
+  background-size: 64px 64px, 64px 64px;
   mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, black 0%, transparent 80%);
+  animation: shc-grid-drift 60s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  body::after { animation: none; }
+  body::before { transition: none; }
 }
 
 ::selection {
@@ -170,6 +189,38 @@ body::before {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--text-primary);
+}
+
+/* One-shot scan line beneath a section title when it enters the viewport */
+@keyframes shc-section-scan {
+  0%   { transform: scaleX(0); transform-origin: left center; opacity: 0; }
+  20%  { opacity: 1; }
+  100% { transform: scaleX(1); transform-origin: left center; opacity: 0.55; }
+}
+.shc-section-scan {
+  position: relative;
+}
+.shc-section-scan::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -6px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--sl-accent-dim) 20%,
+    var(--sl-accent) 50%,
+    var(--sl-accent-teal) 70%,
+    transparent 100%);
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0;
+}
+.shc-section-scan.in-view::after {
+  animation: shc-section-scan 900ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .shc-section-scan.in-view::after { animation: none; transform: scaleX(1); opacity: 0.4; }
 }
 
 /* "How to read this" copy under section eyebrows */
@@ -230,6 +281,33 @@ body::before {
   border-color: var(--hairline-strong);
   transform: translateY(-1px);
   box-shadow: var(--shadow-card-hover);
+}
+
+/* Instrument-panel corner brackets — fade in on hover */
+.shc-card::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: calc(var(--r-lg) - 4px);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 220ms ease;
+  --c: oklch(0.72 0.20 210 / 0.55);
+  --w: 10px;
+  --t: 1px;
+  background:
+    linear-gradient(var(--c), var(--c)) top    left  / var(--w) var(--t) no-repeat,
+    linear-gradient(var(--c), var(--c)) top    left  / var(--t) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) top    right / var(--w) var(--t) no-repeat,
+    linear-gradient(var(--c), var(--c)) top    right / var(--t) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) bottom left  / var(--w) var(--t) no-repeat,
+    linear-gradient(var(--c), var(--c)) bottom left  / var(--t) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) bottom right / var(--w) var(--t) no-repeat,
+    linear-gradient(var(--c), var(--c)) bottom right / var(--t) var(--w) no-repeat;
+}
+.shc-card:hover::after { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .shc-card::after { transition: none; }
 }
 
 /* ── Gradient utilities ──────────────────── */
@@ -505,11 +583,11 @@ body::before {
 @keyframes sl-live-pulse {
   0%, 100% {
     opacity: 1;
-    box-shadow: 0 0 5px var(--positive), 0 0 12px oklch(0.72 0.18 145 / 0.5);
+    box-shadow: 0 0 5px currentColor, 0 0 12px color-mix(in oklch, currentColor 50%, transparent);
   }
   50% {
     opacity: 0.5;
-    box-shadow: 0 0 2px var(--positive);
+    box-shadow: 0 0 2px currentColor;
   }
 }
 
