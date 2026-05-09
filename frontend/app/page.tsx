@@ -18,40 +18,20 @@ import { ErrorBoundary } from "@/components/error-boundary";
 export default function Dashboard() {
   return (
     <main className="min-h-screen px-5 pb-20 pt-6 max-w-[1600px] mx-auto">
-      <header className="flex items-baseline justify-between pb-4 border-b border-[var(--hairline)] mb-5">
-        <div className="flex items-center gap-3">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--sl-accent)] animate-pulse" />
-          <h1 className="flex items-baseline gap-2">
-            <span
-              className="text-[14px] tracking-[0.22em] uppercase"
-              style={{
-                fontFamily: "var(--font-orbitron)",
-                color: "oklch(0.92 0 0)",
-                textShadow: "0 0 8px oklch(0.92 0 0 / 0.4)",
-              }}
-            >
-              Savage
+      <header className="flex items-end justify-between pb-5 border-b border-[var(--hairline)] mb-5">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-baseline gap-3">
+            <h1 className="flex items-baseline gap-[0.5em]">
+              <span className="sl-wordmark-savage">Savage</span>
+              <span className="sl-wordmark-labs">Labs</span>
+            </h1>
+            <span className="sl-wordmark-beta">β</span>
+            <span className="sl-live-badge">
+              <span className="sl-live-dot" />
+              live
             </span>
-            <span
-              className="text-[14px] tracking-[0.28em] uppercase"
-              style={{
-                fontFamily: "var(--font-orbitron)",
-                color: "var(--sl-accent)",
-                textShadow: "var(--sl-accent-glow)",
-              }}
-            >
-              Labs
-            </span>
-            <span
-              className="text-[8px] tracking-[0.18em] uppercase self-end mb-[2px]"
-              style={{
-                fontFamily: "var(--font-orbitron)",
-                color: "oklch(0.55 0 0)",
-              }}
-            >
-              β
-            </span>
-          </h1>
+          </div>
+          <div className="sl-wordmark-bar" />
         </div>
         <DashboardClock />
       </header>

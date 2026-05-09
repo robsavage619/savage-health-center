@@ -26,6 +26,7 @@
   --sl-accent-dim:  oklch(0.55 0.18 210);
   --sl-accent-soft: oklch(0.72 0.20 210 / 0.12);
   --sl-accent-glow: 0 0 8px oklch(0.72 0.20 210), 0 0 24px oklch(0.60 0.22 210 / 0.7), 0 0 48px oklch(0.50 0.22 210 / 0.35);
+  --sl-accent-teal: oklch(0.72 0.18 185);
 
   /* ── Semantic (recovery / performance) ──── */
   --positive: oklch(0.72 0.18 145);
@@ -412,4 +413,135 @@ body::before {
   background-size: 800px 100%;
   animation: shc-shimmer 1.4s linear infinite;
   border-radius: var(--r-sm);
+}
+
+/* ══════════════════════════════════════════
+   Savage Labs — Wordmark
+   ══════════════════════════════════════════ */
+
+/* SAVAGE — metallic shimmer sweep */
+@keyframes sl-savage-shimmer {
+  0%   { background-position: 150% center; }
+  100% { background-position: -50% center; }
+}
+
+.sl-wordmark-savage {
+  font-family: var(--font-orbitron);
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  line-height: 1;
+  background: linear-gradient(
+    105deg,
+    oklch(0.70 0 0)   0%,
+    oklch(0.96 0 0)   30%,
+    oklch(0.82 0.04 220) 45%,
+    oklch(0.96 0 0)   55%,
+    oklch(0.72 0 0)   75%,
+    oklch(0.88 0 0)   100%
+  );
+  background-size: 250% auto;
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: sl-savage-shimmer 5s linear infinite;
+}
+
+/* LABS — neon pulse */
+@keyframes sl-labs-glow {
+  0%, 100% {
+    text-shadow:
+      0 0  6px oklch(0.80 0.22 210),
+      0 0 18px oklch(0.65 0.22 210 / 0.85),
+      0 0 40px oklch(0.55 0.22 210 / 0.50),
+      0 0 80px oklch(0.50 0.22 210 / 0.20);
+  }
+  50% {
+    text-shadow:
+      0 0 10px oklch(0.88 0.22 210),
+      0 0 28px oklch(0.70 0.22 210),
+      0 0 60px oklch(0.58 0.22 210 / 0.70),
+      0 0 110px oklch(0.50 0.22 210 / 0.30);
+  }
+}
+
+.sl-wordmark-labs {
+  font-family: var(--font-orbitron);
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  line-height: 1;
+  color: var(--sl-accent);
+  animation: sl-labs-glow 2.8s ease-in-out infinite;
+}
+
+/* β superscript */
+.sl-wordmark-beta {
+  font-family: var(--font-orbitron);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: oklch(0.42 0 0);
+  align-self: flex-end;
+  margin-bottom: 3px;
+}
+
+/* LIVE badge */
+.sl-live-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-end;
+  margin-bottom: 3px;
+  font-family: var(--font-orbitron);
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--positive);
+  opacity: 0.75;
+}
+
+@keyframes sl-live-pulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 5px var(--positive), 0 0 12px oklch(0.72 0.18 145 / 0.5);
+  }
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 2px var(--positive);
+  }
+}
+
+.sl-live-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--positive);
+  flex-shrink: 0;
+  animation: sl-live-pulse 2s ease-in-out infinite;
+}
+
+/* Animated underline bar beneath the wordmark */
+@keyframes sl-bar-sweep {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+.sl-wordmark-bar {
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent          0%,
+    var(--sl-accent-dim) 20%,
+    var(--sl-accent)     45%,
+    var(--sl-accent-teal) 55%,
+    var(--sl-accent-dim) 80%,
+    transparent          100%
+  );
+  background-size: 200% 100%;
+  animation: sl-bar-sweep 3s linear infinite;
+  opacity: 0.75;
 }
