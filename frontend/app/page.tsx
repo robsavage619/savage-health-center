@@ -12,6 +12,7 @@ import { SyncStatus } from "@/components/sync-status";
 import { DashboardClock } from "@/components/dashboard-clock";
 import { LiveBadge } from "@/components/live-badge";
 import { AmbientHue } from "@/components/ambient-hue";
+import { HeaderHUD } from "@/components/header-hud";
 import { NextWorkoutCard } from "@/components/next-workout-card";
 import { CardioPanel } from "@/components/cardio-panel";
 import { WhoopVitals } from "@/components/whoop-vitals";
@@ -21,8 +22,8 @@ export default function Dashboard() {
   return (
     <main className="min-h-screen px-5 pb-20 pt-6 max-w-[1600px] mx-auto">
       <AmbientHue />
-      <header className="flex items-end justify-between pb-5 border-b border-[var(--hairline)] mb-5">
-        <div className="flex flex-col gap-2">
+      <header className="flex items-stretch justify-between pb-5 border-b border-[var(--hairline)] mb-5 gap-4">
+        <div className="flex flex-col justify-end gap-2 shrink-0">
           <div className="flex items-baseline gap-3">
             <h1 className="flex items-baseline gap-[0.5em]">
               <span className="sl-wordmark-savage">Savage</span>
@@ -33,7 +34,10 @@ export default function Dashboard() {
           </div>
           <div className="sl-wordmark-bar" />
         </div>
-        <DashboardClock />
+        <HeaderHUD />
+        <div className="shrink-0 flex items-end">
+          <DashboardClock />
+        </div>
       </header>
 
       <div className="mb-4">
