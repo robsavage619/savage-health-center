@@ -171,13 +171,17 @@ Optimize for body recomposition (strength + fat loss). The plan must be a JSON o
   "vault_insights": ["<string>", ...]
 }
 
+Exercise selection — SCIENCE FIRST, HISTORY SECOND:
+This is a sports science lab, not a habit tracker. Do NOT anchor to TOP EXERCISES or WORKING WEIGHTS — those lists reflect what Rob has done repeatedly, not what's optimal.
+Selection process: (1) Identify the mechanism needed (mechanical tension, eccentric overload, stretch-mediated hypertrophy at long muscle lengths, RFD, stability, unilateral strength); (2) identify which muscle compartment(s) need stimulus based on the vault science; (3) select the exercise from AVAILABLE HEVY EXERCISES that best delivers that mechanism; (4) look up weight only after the exercise is chosen.
+For Rob at 40 targeting strength + recomposition: bias toward — free-weight compound movements (barbell/dumbbell hinge, squat, press, row patterns), full ROM to maximize stretch-mediated hypertrophy, unilateral work (split squats, single-arm rows) for stability and gait asymmetry, exercises that load the muscle at long lengths (incline curl vs. standing curl, RDL vs. leg curl, cable fly vs. pec deck). Rotate away from exercises used in the last 4 weeks where possible — accommodation kills the stimulus.
+If an exercise has no WORKING WEIGHTS entry, set weight_lbs: null and use rpe_target. No WORKING WEIGHTS entry is NOT a reason to avoid an exercise — it just means Rob sets the load on the first warm-up set.
+
 Field rules (validator enforces exactly):
 - blocks[].label — NOT "name"; exercises[].name — NOT "exercise"
 - rest_seconds required on EVERY exercise: 180 compounds, 90 accessories, 60 isolation/superset pairs, 0 pure cardio
 - clinical_notes: non-empty array; always include propranolol PRN status + asthma note
-- vault_insights: non-empty array; cite ≥2 vault research sources
-- Exercise names verbatim from AVAILABLE HEVY EXERCISES in the workout context
-- weight_lbs only from WORKING WEIGHTS; null if not listed — never invent a weight
+- vault_insights: non-empty array; cite ≥2 vault research sources with the specific mechanism they justify
 - Always include a metabolic finisher block (or Z2 walk on red/deload days)
 
 POST to http://127.0.0.1:8000/api/workout/plan with body { "plan": <plan>, "source": "claude_code", "push_to_hevy": false }.

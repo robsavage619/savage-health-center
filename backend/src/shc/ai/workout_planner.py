@@ -122,12 +122,16 @@ _TAG_SIGNALS: dict[str, tuple[str, ...]] = {
 # They are not in the ranked vault so they never compete with situational notes
 # (overreaching, illness, etc.) that should still surface when relevant.
 _EXERCISE_SCIENCE_PINNED = [
-    "exercise-selection-strength.md",       # which movements & why (specificity, kinetic chain)
-    "exercise-order-strength.md",           # sequencing within a session
-    "schoenfeld-2010-hypertrophy-mechanisms.md",   # mechanical tension / metabolic stress / muscle damage
-    "exercise-selection-hypertrophy.md",    # fiber partitioning, joint angles, variety, rotation
-    "rest-interval-hypertrophy.md",         # rest prescriptions: ≥2 min compound, 60–90 s isolation
-    "rest-interval-strength.md",            # rest by intensity zone; ATP-CP restoration kinetics
+    "exercise-selection-strength.md",           # which movements & why (specificity, kinetic chain)
+    "exercise-order-strength.md",               # sequencing within a session
+    "schoenfeld-2010-hypertrophy-mechanisms.md", # mechanical tension / metabolic stress / muscle damage
+    "exercise-selection-hypertrophy.md",        # fiber partitioning, joint angles, variety, rotation
+    "rest-interval-hypertrophy.md",             # rest prescriptions: ≥2 min compound, 60–90 s isolation
+    "rest-interval-strength.md",               # rest by intensity zone; ATP-CP restoration kinetics
+    "age-related-hypertrophy.md",              # adaptations at 40+ — connective tissue, RFD, recovery
+    "variation-hypertrophy.md",                # exercise rotation to prevent accommodation & hit compartments
+    "eccentric-training-hypertrophy.md",       # eccentric overload as primary hypertrophy driver
+    "range-of-motion-hypertrophy.md",          # full ROM & stretch-mediated hypertrophy
 ]
 
 _DEFAULT_VAULT_LIMIT = 4  # pinned adds 6 notes; 4 ranked = ~10 total vault notes in context
@@ -212,7 +216,7 @@ def _state_signals(
     extra_signals: set[str] | None = None,
 ) -> set[str]:
     """Derive vault-relevance signals from today's DailyState dict."""
-    signals: set[str] = {"default", "recomposition"}
+    signals: set[str] = {"default", "recomposition", "exercise_selection"}
     if state is None:
         return signals | (extra_signals or set())
     rec = state.get("recovery") or {}
