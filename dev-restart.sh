@@ -80,6 +80,7 @@ fi
 # Stale WALs left by deleted sessions can be replayed if they happen to share
 # the canonical DB path recorded in the header. Safe to remove when no process
 # owns them (uvicorn is already dead at this point).
+setopt NULL_GLOB
 for orphan_wal in "$REPO"/.claude/worktrees/*/backend/data/shc.duckdb.wal; do
   [[ -f "$orphan_wal" ]] || continue
   # Skip the canonical WAL (it lives in the main repo, not a worktree)
