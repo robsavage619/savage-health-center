@@ -825,8 +825,8 @@ workout_sets_dedup      -- Deduped sets (handles Hevy sync collisions on retry)
 **Prerequisites:** Python 3.12+, Node 20+, [uv](https://github.com/astral-sh/uv), macOS (Keychain required)
 
 ```bash
-git clone https://github.com/robsavage619/savage-health-center
-cd savage-health-center
+git clone https://github.com/robsavage619/savage-labs
+cd savage-labs
 
 make install
 
