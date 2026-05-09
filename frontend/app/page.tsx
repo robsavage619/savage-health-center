@@ -4,6 +4,7 @@ import { HealthStory } from "@/components/health-story";
 import { PillarRecovery } from "@/components/pillar-recovery";
 import { PillarSleep } from "@/components/pillar-sleep";
 import { PillarTrainingLoad } from "@/components/pillar-training-load";
+import { PeriodizationStrip } from "@/components/periodization-strip";
 import { StrengthPanel } from "@/components/strength-panel";
 import { TrendIntelligence } from "@/components/trend-intelligence";
 import { RightRail } from "@/components/right-rail";
@@ -88,6 +89,10 @@ export default function Dashboard() {
               <PillarTrainingLoad />
             </ErrorBoundary>
           </section>
+
+          <ErrorBoundary label="Periodization">
+            <PeriodizationStrip />
+          </ErrorBoundary>
 
           <ErrorBoundary label="Strength">
             <StrengthPanel />

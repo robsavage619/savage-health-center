@@ -59,6 +59,70 @@ async def get_mesocycle() -> dict[str, Any]:
         conn.close()
 
 
+@router.get("/training/load-curve")
+async def get_load_curve(days: int = 90) -> dict[str, Any]:
+    """Banister fitness-fatigue model over the last N days.
+
+    Returns per-day composite_load + CTL (42d EWMA, fitness), ATL (7d EWMA,
+    fatigue), and TSB = CTL - ATL (form). Positive TSB = fresh, negative TSB
+    = fatigued. Window of -10 to +5 is typical race-ready zone.
+    """
+    import math
+
+    days = max(28, min(days, 365))
+    conn = get_read_conn()
+    try:
+        # Pull a 60d warm-up so EWMAs at the start of the visible window are
+        # initialised against real history, not zero.
+        start = date.today() - timedelta(days=days + 60)
+        rows = conn.execute(
+            "SELECT date, COALESCE(composite_load, 0) "
+            "FROM v_daily_load WHERE date >= ? ORDER BY date",
+            [start.isoformat()],
+        ).fetchall()
+        if not rows:
+            return {"as_of": date.today().isoformat(), "points": []}
+
+        # Fill missing dates with 0 load so EWMAs decay correctly on rest days.
+        by_date = {str(r[0]): float(r[1] or 0) for r in rows}
+        first_date = date.fromisoformat(min(by_date.keys()))
+        last_date = date.today()
+        full: list[tuple[date, float]] = []
+        d = first_date
+        while d <= last_date:
+            full.append((d, by_date.get(d.isoformat(), 0.0)))
+            d = d + timedelta(days=1)
+
+        # Banister EWMA: x_t = x_{t-1} * exp(-1/tau) + load_t * (1 - exp(-1/tau))
+        ctl_tau, atl_tau = 42.0, 7.0
+        ctl_decay = math.exp(-1.0 / ctl_tau)
+        atl_decay = math.exp(-1.0 / atl_tau)
+        ctl, atl = 0.0, 0.0
+        points: list[dict[str, Any]] = []
+        cutoff = last_date - timedelta(days=days)
+        for d, load in full:
+            ctl = ctl * ctl_decay + load * (1 - ctl_decay)
+            atl = atl * atl_decay + load * (1 - atl_decay)
+            if d >= cutoff:
+                points.append({
+                    "date": d.isoformat(),
+                    "load": round(load, 2),
+                    "ctl": round(ctl, 2),
+                    "atl": round(atl, 2),
+                    "tsb": round(ctl - atl, 2),
+                })
+
+        latest = points[-1] if points else None
+        return {
+            "as_of": last_date.isoformat(),
+            "points": points,
+            "today": latest,
+            "tau": {"ctl_days": int(ctl_tau), "atl_days": int(atl_tau)},
+        }
+    finally:
+        conn.close()
+
+
 @router.get("/training/progression")
 async def get_progression(weeks: int = 4) -> dict[str, Any]:
     conn = get_read_conn()

@@ -646,4 +646,24 @@ export const api = {
       }[];
       trend_90d: { date: string; recovery: number; hrv: number | null; rhr: number | null }[];
     }>("/api/whoop/patterns"),
+  mesocycle: () =>
+    get<{
+      id: string;
+      started_on: string;
+      planned_weeks: number;
+      status: string;
+      week_number: number;
+      weeks_remaining: number;
+      is_deload_week: boolean;
+      deload_trigger: string | null;
+      notes: string | null;
+      volume_targets: Record<string, { mev: number; mav: number; mrv: number }>;
+    }>("/api/training/mesocycle"),
+  loadCurve: (days = 90) =>
+    get<{
+      as_of: string;
+      points: { date: string; load: number; ctl: number; atl: number; tsb: number }[];
+      today: { date: string; load: number; ctl: number; atl: number; tsb: number } | null;
+      tau: { ctl_days: number; atl_days: number };
+    }>(`/api/training/load-curve?days=${days}`),
 };
