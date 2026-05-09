@@ -16,9 +16,7 @@ directly; it only:
 
 import json
 import logging
-import re
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from shc.config import settings
@@ -28,284 +26,24 @@ from shc.metrics import compute_daily_state, muscle_group
 log = logging.getLogger(__name__)
 
 # ── Vault research ────────────────────────────────────────────────────────────
+# Delegated to shc.ai.vault — see that module for the full retrieval design.
 
-_KEEP_HEADINGS = {
-    "## Summary",
-    "## Prescription",
-    "## Practical Takeaways",
-    "## Key Claims",
-    "## Key Concepts",
-    "## Evidence",
-    "## Overtraining Continuum",
-    "## Sequence of Impairments",
-    "## Recovery Time by Muscle Group",
-    "## Boundary Conditions",
-    # Exercise-science sections
-    "## Exercise Selection Rules",
-    "## Application to Training Variables",
-    "## Specificity Checklist",
-}
-
-# Map vault tags / filename keywords → state signals they're relevant to.
-# A note's score is the count of (tag, signal) pairs that match today's state.
-_TAG_SIGNALS: dict[str, tuple[str, ...]] = {
-    # ── Recovery / load anomalies ─────────────────────────────────────────────
-    "hrv": ("hrv_anomaly",),
-    "recovery": ("hrv_anomaly", "deload", "illness", "poor_sleep"),
-    "overreaching": ("hrv_anomaly", "deload", "high_acwr"),
-    "overtraining": ("deload", "high_acwr"),
-    "acwr": ("high_acwr",),
-    "load": ("high_acwr",),
-    "deload": ("deload",),
-    "illness": ("illness",),
-    "sleep": ("poor_sleep",),
-    # ── Always-on: strength / recomposition goals ─────────────────────────────
-    "strength": ("default", "recomposition"),
-    "hypertrophy": ("default", "recomposition"),
-    "progressive-overload": ("default", "recomposition"),
-    "overload": ("default",),
-    "frequency": ("default",),
-    "fitness-fatigue": ("default",),
-    "compound-training": ("default", "recomposition"),
-    "hormonal-response": ("default", "recomposition"),
-    "recomposition": ("default", "recomposition"),
-    "fat-loss": ("recomposition",),
-    "body-composition": ("recomposition",),
-    "density": ("recomposition",),
-    "supersets": ("recomposition", "default"),
-    "metabolic": ("recomposition",),
-    "bodybuilding": ("default", "recomposition"),
-    "individualization": ("default",),
-    "variation": ("default",),
-    "phase-potentiation": ("default",),
-    "sra": ("default",),
-    # ── Rest intervals (always relevant — drive rest_seconds prescription) ────
-    "rest-intervals": ("default",),
-    "rest-interval": ("default",),
-    "cluster-sets": ("default",),
-    # ── Fatigue / SRA ────────────────────────────────────────────────────────
-    "sfr": ("hrv_anomaly", "deload", "high_acwr"),
-    "fatigue-management": ("hrv_anomaly", "deload", "high_acwr", "default"),
-    # ── Push/pull imbalance ───────────────────────────────────────────────────
-    "push-pull-balance": ("push_pull_imbalance",),
-    "muscle-balance": ("push_pull_imbalance",),
-    "corrective-exercise": ("push_pull_imbalance",),
-    "posterior-chain": ("push_pull_imbalance",),
-    "pull": ("push_pull_imbalance",),
-    # ── Volume spike / periodization ─────────────────────────────────────────
-    "volume": ("default", "volume_spike"),
-    "volume-management": ("volume_spike",),
-    "periodization": ("default", "volume_spike"),
-    "deload-timing": ("volume_spike",),
-    "fatigue-accumulation": ("volume_spike", "high_acwr"),
-    "supercompensation": ("volume_spike",),
-    # ── Exercise-science notes (surfaced via exercise_selection signal) ───────
-    "strength-training": ("exercise_selection",),
-    "resistance-training": ("exercise_selection",),
-    "exercise-science": ("exercise_selection",),
-    "programming": ("exercise_selection",),
-    "biomechanics": ("exercise_selection",),
-    "physiology": ("exercise_selection",),
-    "muscle-hypertrophy": ("exercise_selection", "recomposition"),
-    "exercise-physiology": ("exercise_selection",),
-    "exercise-prescription": ("exercise_selection", "recomposition"),
-    "exercise-selection": ("exercise_selection",),
-    "exercise-variety": ("exercise_selection",),
-    "fiber-partitioning": ("exercise_selection",),
-    "weak-points": ("exercise_selection",),
-    "specificity": ("exercise_selection",),
-    "range-of-motion": ("exercise_selection",),
-    "eccentric": ("exercise_selection",),
-}
-
-# These notes are loaded unconditionally in workout context.
-# They are not in the ranked vault so they never compete with situational notes
-# (overreaching, illness, etc.) that should still surface when relevant.
-_EXERCISE_SCIENCE_PINNED = [
-    "exercise-selection-strength.md",           # which movements & why (specificity, kinetic chain)
-    "exercise-order-strength.md",               # sequencing within a session
-    "schoenfeld-2010-hypertrophy-mechanisms.md", # mechanical tension / metabolic stress / muscle damage
-    "exercise-selection-hypertrophy.md",        # fiber partitioning, joint angles, variety, rotation
-    "rest-interval-hypertrophy.md",             # rest prescriptions: ≥2 min compound, 60–90 s isolation
-    "rest-interval-strength.md",               # rest by intensity zone; ATP-CP restoration kinetics
-    "age-related-hypertrophy.md",              # adaptations at 40+ — connective tissue, RFD, recovery
-    "variation-hypertrophy.md",                # exercise rotation to prevent accommodation & hit compartments
-    "eccentric-training-hypertrophy.md",       # eccentric overload as primary hypertrophy driver
-    "range-of-motion-hypertrophy.md",          # full ROM & stretch-mediated hypertrophy
-]
-
-_DEFAULT_VAULT_LIMIT = 4  # pinned adds 6 notes; 4 ranked = ~10 total vault notes in context
-
-
-def load_exercise_science_notes() -> str:
-    """Load the hardcoded exercise-science notes unconditionally for workout context."""
-    wiki_dir = settings.vault_path / "wiki"
-    if not wiki_dir.exists():
-        return ""
-    sections: list[str] = []
-    for filename in _EXERCISE_SCIENCE_PINNED:
-        path = wiki_dir / filename
-        if not path.exists():
-            log.warning("Pinned exercise-science note not found: %s", path)
-            continue
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError as e:
-            log.warning("Pinned vault note unreadable %s: %s", path, e)
-            continue
-        content = _strip_frontmatter(raw)
-        excerpt = _extract_sections(content) or content[:1500]
-        title = Path(filename).stem.replace("-", " ").title()
-        for line in content.split("\n"):
-            if line.startswith("# "):
-                title = line[2:].strip()
-                break
-        sections.append(f"#### {title} ({filename})\n\n{excerpt}")
-    if not sections:
-        return ""
-    return "## EXERCISE SELECTION SCIENCE (always loaded)\n" + "\n\n---\n\n".join(sections)
-
-
-def _strip_frontmatter(text: str) -> str:
-    if text.startswith("---"):
-        parts = text.split("---", 2)
-        return parts[2].strip() if len(parts) >= 3 else text
-    return text
-
-
-def _extract_sections(text: str) -> str:
-    lines = text.split("\n")
-    output: list[str] = []
-    capturing = False
-    for line in lines:
-        stripped = line.strip()
-        is_heading = stripped.startswith("## ") or stripped.startswith("# ")
-        if is_heading:
-            capturing = any(h in stripped for h in _KEEP_HEADINGS)
-        if capturing:
-            output.append(line)
-    return "\n".join(output).strip()
-
-
-def _parse_frontmatter_tags(raw: str) -> list[str]:
-    """Extract tags from YAML frontmatter without a yaml dep.
-
-    Handles both inline (`tags: [a, b]`) and block (`tags:\\n  - a`) forms.
-    """
-    if not raw.startswith("---"):
-        return []
-    end = raw.find("---", 3)
-    if end == -1:
-        return []
-    fm = raw[3:end]
-    tags: list[str] = []
-    inline = re.search(r"^tags:\s*\[([^\]]*)\]", fm, re.MULTILINE)
-    if inline:
-        tags.extend(t.strip().strip('"\'') for t in inline.group(1).split(","))
-    block = re.search(r"^tags:\s*\n((?:\s*-\s*\S+.*\n?)+)", fm, re.MULTILINE)
-    if block:
-        for line in block.group(1).splitlines():
-            t = line.strip().lstrip("-").strip().strip('"\'')
-            if t:
-                tags.append(t)
-    return [t.lower() for t in tags if t]
-
-
-def _state_signals(
-    state: dict[str, Any] | None,
-    extra_signals: set[str] | None = None,
-) -> set[str]:
-    """Derive vault-relevance signals from today's DailyState dict."""
-    signals: set[str] = {"default", "recomposition", "exercise_selection"}
-    if state is None:
-        return signals | (extra_signals or set())
-    rec = state.get("recovery") or {}
-    load = state.get("training_load") or {}
-    chk = state.get("checkin") or {}
-    gates = state.get("gates") or {}
-    sleep = state.get("sleep") or {}
-    if (rec.get("hrv_sigma") or 0) < -1.0:
-        signals.add("hrv_anomaly")
-    if (load.get("acwr") or 0) > 1.3:
-        signals.add("high_acwr")
-    if gates.get("deload_required"):
-        signals.add("deload")
-    if chk.get("illness_flag"):
-        signals.add("illness")
-    last_sleep = sleep.get("last_hours")
-    if last_sleep is not None and last_sleep < 6:
-        signals.add("poor_sleep")
-    if extra_signals:
-        signals |= extra_signals
-    return signals
+from shc.ai.vault import state_signals as _state_signals_fn
+from shc.ai.vault import vault_context as _vault_context
 
 
 def load_vault_research(
     state: dict[str, Any] | None = None,
-    limit: int = _DEFAULT_VAULT_LIMIT,
+    limit: int = 20,
     extra_signals: set[str] | None = None,
+    keyword_hints: list[str] | None = None,
 ) -> str:
-    """Load vault notes ranked by relevance to today's state.
-
-    All `wiki/*.md` files are scanned. Each note's frontmatter tags (and, as a
-    fallback, filename keywords) are scored against signals derived from the
-    `DailyState` dict. The top `limit` notes are returned as one formatted
-    string, with a header listing the active signals so the LLM understands
-    why these notes were chosen.
-
-    Returns an empty string when the vault directory is missing — callers
-    should treat that as "no vault available" rather than an error.
-    """
-    wiki_dir = settings.vault_path / "wiki"
-    if not wiki_dir.exists():
-        log.warning("Vault wiki dir not found at %s", wiki_dir)
-        return ""
-
-    signals = _state_signals(state, extra_signals)
-    scored: list[tuple[int, str, str]] = []  # (-score, name, formatted excerpt)
-
-    for path in sorted(wiki_dir.glob("*.md")):
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError as e:
-            log.warning("Vault note unreadable %s: %s", path, e)
-            continue
-
-        tags = _parse_frontmatter_tags(raw)
-        score = 0
-        for tag in tags:
-            for sig in _TAG_SIGNALS.get(tag, ()):
-                if sig in signals:
-                    score += 2 if sig != "default" else 1
-        if score == 0:
-            stem = path.stem.lower().replace("-", "")
-            for sig in signals:
-                if sig != "default" and sig.replace("_", "") in stem:
-                    score += 1
-
-        content = _strip_frontmatter(raw)
-        excerpt = _extract_sections(content) or content[:1500]
-        title = path.stem.replace("-", " ").title()
-        for line in content.split("\n"):
-            if line.startswith("# "):
-                title = line[2:].strip()
-                break
-        scored.append((-score, path.name, f"#### {title} ({path.name})\n\n{excerpt}"))
-
-    if not scored:
-        return ""
-
-    scored.sort()
-    relevant = [s for s in scored if -s[0] > 0]
-    chosen = (relevant or scored)[:limit]
-    sigs_str = ", ".join(sorted(signals))
-    header = f"## VAULT RESEARCH (top {len(chosen)} for signals: {sigs_str})\n"
-    return header + "\n\n---\n\n".join(c[2] for c in chosen)
+    return _vault_context(state=state, extra_signals=extra_signals,
+                          keyword_hints=keyword_hints, limit=limit)
 
 
 def get_vault_research(state: dict[str, Any] | None = None) -> str:
-    """Backwards-compatible accessor; no caching since selection is state-aware."""
-    return load_vault_research(state)
+    return _vault_context(state=state)
 
 
 # ── Training context builder ──────────────────────────────────────────────────
@@ -479,9 +217,7 @@ def build_training_context(conn, planning_date: date | None = None) -> tuple[str
             f"(28d {rec['rhr_baseline_28d']:.0f}, {rec['rhr_elevated_pct']:+.1f}%)"
         )
     if rec["skin_temp_delta"] is not None:
-        temp_f = rec["skin_temp"] * 9 / 5 + 32
-        delta_f = rec["skin_temp_delta"] * 9 / 5
-        lines.append(f"- Skin temp {temp_f:.1f}°F (Δ {delta_f:+.1f}°F vs 28d baseline)")
+        lines.append(f"- Skin temp Δ {rec['skin_temp_delta']:+.2f}°C vs 28d baseline")
 
     # Daily check-in inputs.
     chk_parts: list[str] = []
@@ -653,17 +389,42 @@ def build_training_context(conn, planning_date: date | None = None) -> tuple[str
     except Exception as _e:
         log.debug("hevy_exercise_templates not available: %s", _e)
 
-    exercise_science = load_exercise_science_notes()
-    if exercise_science:
-        lines.append("\n" + exercise_science)
+    # ── Mesocycle + progression context ──────────────────────────────────────
+    try:
+        from shc.training.mesocycle import mesocycle_context_block
+        meso_block = mesocycle_context_block(conn)
+        if meso_block:
+            lines.append("\n" + meso_block)
+    except Exception as _e:
+        log.debug("mesocycle context unavailable: %s", _e)
 
-    extra: set[str] = {"exercise_selection"}  # surfaces programming/hypertrophy science in ranked vault
+    # ── Vault research — catalog + excerpts ───────────────────────────────────
+    extra: set[str] = set()
     ratio = load.get("push_pull_ratio_28d")
     if ratio is not None and (ratio > 1.3 or ratio < 0.75):
         extra.add("push_pull_imbalance")
     if abs(vol_trend_pct) > 40:
         extra.add("volume_spike")
-    vault = load_vault_research(state, extra_signals=extra)
+
+    # Keyword hints surface notes that match the session's movement/muscle focus.
+    # Pull these from soreness, balance imbalance, and recent exercise names.
+    hints: list[str] = ["hypertrophy", "strength", "progressive overload", "periodization"]
+    if ratio is not None and ratio > 1.3:
+        hints += ["pull", "posterior chain", "row", "lat"]
+    elif ratio is not None and ratio < 0.75:
+        hints += ["push", "chest", "press", "anterior"]
+    try:
+        sore_row = conn.execute(
+            "SELECT muscle_soreness FROM daily_checkin WHERE date = current_date LIMIT 1"
+        ).fetchone()
+        if sore_row and sore_row[0]:
+            import json as _json
+            sore_map = _json.loads(sore_row[0]) if isinstance(sore_row[0], str) else sore_row[0]
+            hints.extend(k for k, v in sore_map.items() if (v or 0) >= 2)
+    except Exception:
+        pass
+
+    vault = load_vault_research(state, extra_signals=extra, keyword_hints=hints)
     if vault:
         lines.append("\n" + vault)
 

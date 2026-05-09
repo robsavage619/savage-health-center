@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from shc.api.middleware import HostOriginMiddleware
-from shc.api.routers import auth, dashboard, hevy, vault
+from shc.api.routers import auth, dashboard, hevy, training, vault
 from shc.config import settings
 from shc.db.schema import init_db
 from shc.ingest.apple import start_watcher, stop_watcher
@@ -49,6 +49,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/auth")
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(hevy.router, prefix="/api")
+app.include_router(training.router, prefix="/api")
 app.include_router(vault.router, prefix="/api")
 
 
