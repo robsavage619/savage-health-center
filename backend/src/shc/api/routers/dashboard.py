@@ -2798,6 +2798,115 @@ async def recent_workouts(limit: int = Query(default=10, gt=0, le=50)) -> list[d
     ]
 
 
+class SessionSetLog(BaseModel):
+    """Single set logged from the live workout view."""
+    block: str | None = None
+    exercise: str
+    set_idx: int
+    target_reps: int | None = None
+    target_weight_kg: float | None = None
+    target_rpe: float | None = None
+    target_rir: int | None = None
+    actual_reps: int | None = None
+    actual_weight_kg: float | None = None
+    actual_rpe: float | None = None
+    actual_rir: int | None = None
+    mcv_m_s: float | None = None
+    notes: str | None = None
+
+
+@router.post("/workout/session/log")
+async def log_session_set(body: SessionSetLog) -> dict:
+    """Persist a single set from the live workout view (autoregulation source-of-truth)."""
+    import uuid
+    sid = str(uuid.uuid4())
+    today = date.today().isoformat()
+    async with write_ctx() as conn:
+        conn.execute(
+            """
+            INSERT INTO session_set_logs
+                (id, session_date, block, exercise, set_idx,
+                 target_reps, target_weight_kg, target_rpe, target_rir,
+                 actual_reps, actual_weight_kg, actual_rpe, actual_rir,
+                 mcv_m_s, notes)
+            VALUES ($id, $d, $block, $ex, $idx,
+                    $tr, $tw, $trp, $tri,
+                    $ar, $aw, $arp, $ari,
+                    $mcv, $notes)
+            """,
+            {
+                "id": sid,
+                "d": today,
+                "block": body.block,
+                "ex": body.exercise,
+                "idx": body.set_idx,
+                "tr": body.target_reps,
+                "tw": body.target_weight_kg,
+                "trp": body.target_rpe,
+                "tri": body.target_rir,
+                "ar": body.actual_reps,
+                "aw": body.actual_weight_kg,
+                "arp": body.actual_rpe,
+                "ari": body.actual_rir,
+                "mcv": body.mcv_m_s,
+                "notes": body.notes,
+            },
+        )
+    return {"status": "ok", "id": sid, "date": today}
+
+
+@router.get("/workout/session/today")
+async def session_today() -> dict:
+    """Return all sets logged in today's live session."""
+    today = date.today().isoformat()
+    conn = get_read_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, block, exercise, set_idx,
+                   target_reps, target_weight_kg, target_rpe, target_rir,
+                   actual_reps, actual_weight_kg, actual_rpe, actual_rir,
+                   mcv_m_s, completed_at, notes
+            FROM session_set_logs
+            WHERE session_date = $d
+            ORDER BY completed_at, set_idx
+            """,
+            {"d": today},
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "date": today,
+        "sets": [
+            {
+                "id": r[0],
+                "block": r[1],
+                "exercise": r[2],
+                "set_idx": r[3],
+                "target_reps": r[4],
+                "target_weight_kg": r[5],
+                "target_rpe": r[6],
+                "target_rir": r[7],
+                "actual_reps": r[8],
+                "actual_weight_kg": r[9],
+                "actual_rpe": r[10],
+                "actual_rir": r[11],
+                "mcv_m_s": r[12],
+                "completed_at": r[13].isoformat() if r[13] else None,
+                "notes": r[14],
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.delete("/workout/session/log/{set_id}")
+async def delete_session_set(set_id: str) -> dict:
+    async with write_ctx() as conn:
+        conn.execute("DELETE FROM session_set_logs WHERE id = $id", {"id": set_id})
+    return {"status": "ok"}
+
+
 @router.post("/workout/retrospective")
 async def submit_retrospective(body: RetrospectiveSubmission) -> dict:
     """Store a Claude-generated workout retrospective."""
