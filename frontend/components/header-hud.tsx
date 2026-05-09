@@ -175,9 +175,6 @@ export function HeaderHUD() {
 
   return (
     <div className="relative flex-1 flex items-end justify-center pb-[6px] min-w-0 overflow-hidden" style={{ height: "100%" }}>
-      {/* Ambient waveform */}
-      <Waveform recoveryScore={recoveryScore} />
-
       {/* Stat strip */}
       <div className="relative z-10 flex items-center gap-4 px-6"
         style={{
