@@ -5,19 +5,19 @@
 
   /* ── Surface ────────────────────────────── */
   --bg:           oklch(0.105 0 0);
-  --bg-elevated: oklch(0.135 0 0);
-  --card:        oklch(0.155 0 0);
-  --card-hover:  oklch(0.18 0 0);
+  --bg-elevated: oklch(0.145 0 0);
+  --card:        oklch(0.170 0 0);
+  --card-hover:  oklch(0.195 0 0);
   --hairline:    oklch(1 0 0 / 0.07);
   --hairline-strong: oklch(1 0 0 / 0.12);
   --background: var(--bg);
 
   /* ── Text ───────────────────────────────── */
-  --foreground:    oklch(0.96 0 0);
-  --text-primary:  oklch(0.96 0 0);
-  --text-muted:    oklch(0.60 0 0);
-  --text-dim:      oklch(0.45 0 0);
-  --text-faint:    oklch(0.35 0 0);
+  --foreground:    oklch(1.0 0 0);
+  --text-primary:  oklch(1.0 0 0);
+  --text-muted:    oklch(0.68 0 0);
+  --text-dim:      oklch(0.54 0 0);
+  --text-faint:    oklch(0.42 0 0);
   --muted:           oklch(0.22 0 0);
   --muted-foreground: var(--text-muted);
 
@@ -81,6 +81,7 @@ html {
   font-family: var(--font-geist-sans, system-ui, sans-serif);
   font-feature-settings: "ss01", "cv11", "tnum";
   font-variant-numeric: tabular-nums;
+  font-weight: 420;
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.005em;
 }
