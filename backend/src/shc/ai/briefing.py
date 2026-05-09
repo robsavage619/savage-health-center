@@ -230,7 +230,9 @@ def build_daily_context(conn) -> str:
             f"(28d baseline {rec['hrv_baseline_28d']:.1f} ± {rec['hrv_sd_28d']:.1f} ms)"
         )
     if rec["skin_temp_delta"] is not None:
-        lines.append(f"Skin temp: {rec['skin_temp']:.2f}°C (Δ {rec['skin_temp_delta']:+.2f}°C vs 28d)")
+        temp_f = rec["skin_temp"] * 9 / 5 + 32
+        delta_f = rec["skin_temp_delta"] * 9 / 5
+        lines.append(f"Skin temp: {temp_f:.1f}°F (Δ {delta_f:+.1f}°F vs 28d)")
 
     # Sleep.
     if sleep["last_hours"] is not None:

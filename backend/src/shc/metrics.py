@@ -559,9 +559,12 @@ def _gates(
     if rec.hrv_sigma is not None and rec.hrv_sigma < -1.5:
         g.max_intensity = "low"
         reasons.append(f"HRV {rec.hrv_sigma:+.2f}σ → red — cap intensity LOW")
-    if rec.skin_temp_delta is not None and abs(rec.skin_temp_delta) >= 0.5:
+    if rec.skin_temp_delta is not None and rec.skin_temp_delta >= 0.5:
+        # Only elevated skin temp (positive delta) signals illness/fever risk.
+        # Negative deltas are normal (cooler environment, less peripheral blood flow).
+        delta_f = rec.skin_temp_delta * 9 / 5
         g.max_intensity = "low"
-        reasons.append(f"Skin-temp Δ{rec.skin_temp_delta:+.2f}°C — possible illness, Z2 only")
+        reasons.append(f"Skin-temp Δ+{delta_f:.1f}°F above baseline — possible illness, Z2 only")
     if chk.illness_flag:
         g.max_intensity = "rest"
         reasons.append("Illness flag set — rest day")
