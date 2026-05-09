@@ -28,7 +28,15 @@ const TIER = {
 // ── Readiness banner ─────────────────────────────────────────────────────────
 
 function ReadinessBanner({ plan }: { plan: WorkoutPlan }) {
-  const t = TIER[plan.readiness_tier] ?? TIER.yellow;
+  const base = TIER[plan.readiness_tier] ?? TIER.yellow;
+  const intensity = plan.recommendation?.intensity;
+  // Green body, low/rest intensity = gates forced a deload despite good recovery.
+  // Override the label so "Go hard" doesn't show on a Z2 walk day.
+  const labelOverride =
+    plan.readiness_tier === "green" && (intensity === "low" || intensity === "rest")
+      ? "Active recovery"
+      : null;
+  const t = labelOverride ? { ...base, label: labelOverride } : base;
   return (
     <div
       className="rounded-[var(--r-md)] overflow-hidden"
