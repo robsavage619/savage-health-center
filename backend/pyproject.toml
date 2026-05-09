@@ -1,7 +1,7 @@
 [project]
 name = "shc"
 version = "0.1.0"
-description = "Savage Health Center — local personal health dashboard"
+description = "Savage Labs — personal health intelligence platform"
 requires-python = ">=3.12"
 dependencies = [
     # API

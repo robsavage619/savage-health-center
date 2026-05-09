@@ -19,17 +19,38 @@ export default function Dashboard() {
   return (
     <main className="min-h-screen px-5 pb-20 pt-6 max-w-[1600px] mx-auto">
       <header className="flex items-baseline justify-between pb-4 border-b border-[var(--hairline)] mb-5">
-        <div className="flex items-baseline gap-3">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--positive)] animate-pulse" />
-          <h1
-            className="text-[14px] tracking-[0.22em] uppercase"
-            style={{
-              fontFamily: "var(--font-orbitron)",
-              color: "oklch(0.88 0.18 145)",
-              textShadow: "0 0 8px oklch(0.88 0.18 145), 0 0 24px oklch(0.72 0.22 145 / 0.7), 0 0 48px oklch(0.6 0.25 145 / 0.35)",
-            }}
-          >
-            Savage Health Center
+        <div className="flex items-center gap-3">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--sl-accent)] animate-pulse" />
+          <h1 className="flex items-baseline gap-2">
+            <span
+              className="text-[14px] tracking-[0.22em] uppercase"
+              style={{
+                fontFamily: "var(--font-orbitron)",
+                color: "oklch(0.92 0 0)",
+                textShadow: "0 0 8px oklch(0.92 0 0 / 0.4)",
+              }}
+            >
+              Savage
+            </span>
+            <span
+              className="text-[14px] tracking-[0.28em] uppercase"
+              style={{
+                fontFamily: "var(--font-orbitron)",
+                color: "var(--sl-accent)",
+                textShadow: "var(--sl-accent-glow)",
+              }}
+            >
+              Labs
+            </span>
+            <span
+              className="text-[8px] tracking-[0.18em] uppercase self-end mb-[2px]"
+              style={{
+                fontFamily: "var(--font-orbitron)",
+                color: "oklch(0.55 0 0)",
+              }}
+            >
+              β
+            </span>
           </h1>
         </div>
         <DashboardClock />

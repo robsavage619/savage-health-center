@@ -7,8 +7,8 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Savage Health Center",
-  description: "Personal health command center",
+  title: "Savage Labs",
+  description: "Personal health intelligence platform",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

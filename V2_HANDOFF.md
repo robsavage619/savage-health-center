@@ -1,4 +1,4 @@
-# Savage Health Center — V2 Dashboard Agent Handoff
+# Savage Labs — V2 Dashboard Agent Handoff
 
 ## Full Project Plan
 
@@ -13,7 +13,7 @@ The current codebase completed **P1** of that plan. You are picking up at **P2**
 
 ## Who You Are / What You're Building
 
-You are picking up a personal health command center called **Savage Health Center** (SHC). The owner is Rob Savage — a serious lifter, WHOOP wearer, and senior software engineer who wants a premium, data-rich health OS that he could theoretically sell to the public. Rob's exact words: *"Imagine you were going to sell this to the public. Think anyone would buy this?"* — meaning v1 absolutely does not clear the bar.
+You are picking up a personal health intelligence platform called **Savage Labs**. The owner is Rob Savage — a serious lifter, WHOOP wearer, and senior software engineer who wants a premium, data-rich health OS that he could theoretically sell to the public. Rob's exact words: *"Imagine you were going to sell this to the public. Think anyone would buy this?"* — meaning v1 absolutely does not clear the bar.
 
 Your job: build a dashboard that looks and feels like something between **Whoop.com**, **Levels**, and **Arc Browser** threw a party. Dense with insight, premium dark aesthetic, zero wasted space, every number tells a story.
 
@@ -202,7 +202,7 @@ backend/
 
 ## What "Done" Looks Like
 
-A visitor who has never heard of Savage Health Center opens the dashboard and within 10 seconds:
+A visitor who has never heard of Savage Labs opens the dashboard and within 10 seconds:
 1. Knows exactly how Rob's body is doing today
 2. Can see a clear trend story over the last month
 3. Understands the *relationship* between sleep, recovery, and training

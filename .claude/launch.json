@@ -2,14 +2,14 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "SHC API",
+      "name": "Savage Labs API",
       "runtimeExecutable": "uv",
       "runtimeArgs": ["run", "uvicorn", "shc.api.main:app", "--host", "127.0.0.1", "--port", "8000", "--reload", "--log-config", "../logging.yaml"],
       "port": 8000,
       "cwd": "backend"
     },
     {
-      "name": "SHC Web",
+      "name": "Savage Labs Web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000,

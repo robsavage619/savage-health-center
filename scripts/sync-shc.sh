@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Hit the SHC sync endpoints (WHOOP + Hevy) — meant to be invoked by the
+# Hit the Savage Labs sync endpoints (WHOOP + Hevy) — meant to be invoked by the
 # launchd agent at `com.savage.shc-sync.plist`. Skips gracefully if the
 # local API is not running (no error spam when the laptop is closed or the
 # dev server is down).

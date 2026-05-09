@@ -1,6 +1,6 @@
-# SHC Decisions
+# Savage Labs — Decisions
 
-ADR log for SHC architecture choices. Most recent first. One section per decision.
+ADR log for architecture choices. Most recent first. One section per decision.
 
 When adding: include **Context**, **Decision**, **Why**, **Consequences**. Skip the ceremony if it's a small choice — three sentences is fine. The point is that future-you (or Claude) can answer "why did we do it this way?" without re-deriving from code.
 

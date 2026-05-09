@@ -1,6 +1,6 @@
-# Savage Health Center — Project Conventions
+# Savage Labs — Project Conventions
 
-Personal health command center. Single user (Rob). Always push to main directly — no PRs, no feature branches.
+Personal health intelligence platform. Single user (Rob). Always push to main directly — no PRs, no feature branches.
 
 ## Pre-flight (every session, before previewing or claiming results)
 
