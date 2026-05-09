@@ -338,6 +338,16 @@ export interface DailyStateSleep {
   deep_pct_last: number | null;
   deep_min_last: number | null;
   rem_min_last: number | null;
+  light_min_last: number | null;
+  awake_min_last: number | null;
+  rem_pct_last: number | null;
+  efficiency_pct_last: number | null;
+  consistency_pct_last: number | null;
+  performance_pct_last: number | null;
+  disturbance_count_last: number | null;
+  sleep_needed_min_last: number | null;
+  midpoint_local_h_last: number | null;
+  midpoint_stdev_h_7d: number | null;
   spo2_avg_last: number | null;
   score: number | null;
 }

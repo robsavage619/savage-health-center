@@ -83,6 +83,16 @@ class SleepMetrics:
     deep_pct_last: float | None = None       # OSA-aware: deep sleep matters more than duration
     deep_min_last: float | None = None
     rem_min_last: float | None = None
+    light_min_last: float | None = None
+    awake_min_last: float | None = None
+    rem_pct_last: float | None = None
+    efficiency_pct_last: float | None = None
+    consistency_pct_last: float | None = None
+    performance_pct_last: float | None = None
+    disturbance_count_last: int | None = None
+    sleep_needed_min_last: float | None = None
+    midpoint_local_h_last: float | None = None   # decimal local hours, 0-24
+    midpoint_stdev_h_7d: float | None = None     # social jet-lag proxy
     spo2_avg_last: float | None = None       # < 95% is a clinical flag for sleep-disordered breathing
     score: float | None = None               # 0-100 composite (duration + deep% + spo2)
 
@@ -348,31 +358,89 @@ def _recovery(conn, today: date) -> RecoveryMetrics:
 
 def _sleep(conn, today: date) -> SleepMetrics:
     rows = conn.execute(
-        "SELECT night_date, epoch(ts_out-ts_in)/3600.0 AS hrs, stages_json, spo2_avg "
+        "SELECT night_date, epoch(ts_out-ts_in)/3600.0 AS hrs, "
+        "       sws_min, rem_min, light_min, awake_min, "
+        "       sleep_efficiency_pct, sleep_consistency_pct, sleep_performance_pct, "
+        "       disturbance_count, sleep_needed_min, spo2_avg, "
+        "       ts_in, ts_out, stages_json "
         "FROM sleep WHERE night_date >= $s AND ts_in IS NOT NULL AND ts_out IS NOT NULL "
-        "ORDER BY night_date",
+        "  AND COALESCE(is_nap, FALSE) = FALSE "
+        "ORDER BY night_date, ts_in",
         {"s": (today - timedelta(days=14)).isoformat()},
     ).fetchall()
     m = SleepMetrics()
     if not rows:
         return m
-    last = rows[-1]
+
+    # Collapse multiple sleep records per night (naps already filtered) into the
+    # longest one — Whoop sometimes returns split sessions for awakenings.
+    by_night: dict[str, tuple] = {}
+    for r in rows:
+        key = str(r[0])
+        prev = by_night.get(key)
+        if prev is None or (r[1] or 0) > (prev[1] or 0):
+            by_night[key] = r
+    nights = [by_night[k] for k in sorted(by_night.keys())]
+    last = nights[-1]
+
     m.last_hours = round(float(last[1]), 2) if last[1] is not None else None
-    if last[2]:
+    sws, rem, light, awake = last[2], last[3], last[4], last[5]
+    # Fallback: parse stages_json if dedicated columns are null (older rows).
+    if sws is None and last[14]:
         try:
-            stages = json.loads(last[2]) if isinstance(last[2], str) else last[2]
-            deep = float(stages.get("deep_min", 0) or 0)
-            rem = float(stages.get("rem_min", 0) or 0)
-            light = float(stages.get("light_min", 0) or 0)
-            asleep = deep + rem + light
-            if asleep > 0:
-                m.deep_min_last = round(deep, 1)
-                m.rem_min_last = round(rem, 1)
-                m.deep_pct_last = round(deep / asleep, 3)
-        except (ValueError, AttributeError):
+            stages = json.loads(last[14]) if isinstance(last[14], str) else last[14]
+            if isinstance(stages, str):
+                stages = json.loads(stages.replace("'", '"'))
+            if "total_slow_wave_sleep_time_milli" in stages:
+                sws = (stages.get("total_slow_wave_sleep_time_milli") or 0) / 60000
+                rem = (stages.get("total_rem_sleep_time_milli") or 0) / 60000
+                light = (stages.get("total_light_sleep_time_milli") or 0) / 60000
+                awake = (stages.get("total_awake_time_milli") or 0) / 60000
+        except (ValueError, AttributeError, TypeError):
             pass
-    m.spo2_avg_last = round(float(last[3]), 1) if last[3] is not None else None
-    hours_vals = [float(r[1]) for r in rows if r[1] is not None and 2 < float(r[1]) < 14]
+
+    if sws is not None:
+        m.deep_min_last = round(float(sws), 1)
+    if rem is not None:
+        m.rem_min_last = round(float(rem), 1)
+    if light is not None:
+        m.light_min_last = round(float(light), 1)
+    if awake is not None:
+        m.awake_min_last = round(float(awake), 1)
+
+    asleep = sum(float(x or 0) for x in (sws, rem, light))
+    if asleep > 0:
+        m.deep_pct_last = round(float(sws or 0) / asleep, 3)
+        m.rem_pct_last = round(float(rem or 0) / asleep, 3)
+
+    m.efficiency_pct_last = round(float(last[6]), 1) if last[6] is not None else None
+    m.consistency_pct_last = round(float(last[7]), 1) if last[7] is not None else None
+    m.performance_pct_last = round(float(last[8]), 1) if last[8] is not None else None
+    m.disturbance_count_last = int(last[9]) if last[9] is not None else None
+    m.sleep_needed_min_last = round(float(last[10]), 1) if last[10] is not None else None
+    m.spo2_avg_last = round(float(last[11]), 1) if last[11] is not None else None
+
+    # Sleep midpoint: ts_in + (ts_out - ts_in) / 2, expressed as decimal local hours.
+    def _midpoint_hours(ts_in, ts_out) -> float | None:
+        if ts_in is None or ts_out is None:
+            return None
+        try:
+            mid = ts_in + (ts_out - ts_in) / 2
+            return mid.hour + mid.minute / 60 + mid.second / 3600
+        except Exception:
+            return None
+
+    midpoints = [_midpoint_hours(r[12], r[13]) for r in nights]
+    midpoints = [x for x in midpoints if x is not None]
+    if midpoints:
+        m.midpoint_local_h_last = round(midpoints[-1], 2)
+        last7_mid = midpoints[-7:]
+        if len(last7_mid) >= 2:
+            # Treat midpoint as circular: hours near 0 and 24 are adjacent.
+            shifted = [(h - last7_mid[0] + 12) % 24 - 12 + last7_mid[0] for h in last7_mid]
+            m.midpoint_stdev_h_7d = round(_st.pstdev(shifted), 2)
+
+    hours_vals = [float(r[1]) for r in nights if r[1] is not None and 2 < float(r[1]) < 14]
     last7 = hours_vals[-7:]
     if last7:
         m.avg_7d = round(sum(last7) / len(last7), 2)

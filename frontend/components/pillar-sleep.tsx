@@ -87,7 +87,13 @@ export function PillarSleep() {
     queryFn: api.dailyState,
     staleTime: 5 * 60 * 1000,
   });
-  const spo2Last = stateQ.data?.sleep.spo2_avg_last ?? null;
+  const sleepState = stateQ.data?.sleep;
+  const spo2Last = sleepState?.spo2_avg_last ?? null;
+  const effLast = sleepState?.efficiency_pct_last ?? null;
+  const disturbLast = sleepState?.disturbance_count_last ?? null;
+  const midpointStdev = sleepState?.midpoint_stdev_h_7d ?? null;
+  const midpointLast = sleepState?.midpoint_local_h_last ?? null;
+  const awakeLast = sleepState?.awake_min_last ?? null;
 
   const entries = data ?? [];
   const parsed = entries.map((e) => ({ e, s: parseStages(e.stages) }));
@@ -126,46 +132,88 @@ export function PillarSleep() {
         <span className="text-[10.5px] text-[var(--text-dim)] tabular-nums">last 7 nights</span>
       </div>
 
-      <div className="grid grid-cols-5 gap-2 mt-3">
+      <div className="grid grid-cols-6 gap-2 mt-3">
         <div>
           <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">Avg</p>
           <Metric value={avgHours ? avgHours.toFixed(1) : "—"} unit="h" size="md" />
         </div>
         <div>
           <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">Deep</p>
-          <Metric value={avgDeepPct ? avgDeepPct.toFixed(0) : "—"} unit="%" size="md" />
+          <Metric
+            value={avgDeepPct ? avgDeepPct.toFixed(0) : "—"}
+            unit="%"
+            size="md"
+            tone={avgDeepPct >= 15 && avgDeepPct <= 25 ? "positive" : avgDeepPct ? "neutral" : "neutral"}
+          />
         </div>
         <div>
           <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">REM</p>
-          <Metric value={avgRemPct ? avgRemPct.toFixed(0) : "—"} unit="%" size="md" />
-        </div>
-        <div>
-          <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">SpO₂</p>
           <Metric
-            value={spo2Last != null ? spo2Last.toFixed(1) : "—"}
-            unit={spo2Last != null ? "%" : undefined}
+            value={avgRemPct ? avgRemPct.toFixed(0) : "—"}
+            unit="%"
             size="md"
-            tone={spo2Last == null ? "neutral" : spo2Last >= 95 ? "positive" : spo2Last >= 90 ? "neutral" : "negative"}
+            tone={avgRemPct >= 20 && avgRemPct <= 28 ? "positive" : avgRemPct ? "neutral" : "neutral"}
           />
         </div>
-        <div className="min-w-0">
-          <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">Consist.</p>
-          <p
-            className="text-[13px] font-medium leading-tight tracking-tight"
-            style={{
-              color:
-                consistencyTone === "positive"
-                  ? "var(--positive)"
-                  : consistencyTone === "negative"
-                  ? "var(--negative)"
-                  : "var(--text-primary)",
-            }}
-            title={consistencyLabel}
-          >
-            {consistencyLabel}
-          </p>
-          {consistency != null && (
-            <p className="text-[10px] text-[var(--text-muted)] tabular-nums mt-0.5">σ {consistency.toFixed(2)}h</p>
+        <div title="Sleep efficiency = time asleep / time in bed. >85% is the target.">
+          <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">Eff.</p>
+          <Metric
+            value={effLast != null ? effLast.toFixed(0) : spo2Last != null ? spo2Last.toFixed(1) : "—"}
+            unit={effLast != null || spo2Last != null ? "%" : undefined}
+            size="md"
+            tone={
+              effLast == null
+                ? spo2Last == null
+                  ? "neutral"
+                  : spo2Last >= 95
+                  ? "positive"
+                  : spo2Last >= 90
+                  ? "neutral"
+                  : "negative"
+                : effLast >= 85
+                ? "positive"
+                : effLast >= 75
+                ? "neutral"
+                : "negative"
+            }
+          />
+        </div>
+        <div title="Mid-sleep awakenings — Whoop disturbance count for last night.">
+          <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">Wakes</p>
+          <Metric
+            value={disturbLast != null ? String(disturbLast) : "—"}
+            size="md"
+            tone={disturbLast == null ? "neutral" : disturbLast <= 3 ? "positive" : disturbLast <= 7 ? "neutral" : "negative"}
+          />
+        </div>
+        <div className="min-w-0" title="Sleep midpoint variance over 7 nights — circadian/social jet-lag proxy. <0.75h = tight.">
+          <p className="text-[10px] text-[var(--text-dim)] uppercase tracking-wider">Mid σ</p>
+          <Metric
+            value={midpointStdev != null ? midpointStdev.toFixed(2) : consistency != null ? consistency.toFixed(2) : "—"}
+            unit={midpointStdev != null || consistency != null ? "h" : undefined}
+            size="md"
+            tone={
+              midpointStdev == null
+                ? consistencyTone
+                : midpointStdev < 0.75
+                ? "positive"
+                : midpointStdev < 1.5
+                ? "neutral"
+                : "negative"
+            }
+          />
+          {midpointLast != null && (
+            <p className="text-[10px] text-[var(--text-muted)] tabular-nums mt-0.5">
+              {(() => {
+                // Convert decimal hours (24h) to 12h clock w/ am/pm.
+                const total = ((midpointLast % 24) + 24) % 24;
+                const h24 = Math.floor(total);
+                const m = Math.round((total - h24) * 60);
+                const ampm = h24 < 12 ? "am" : "pm";
+                const h12 = ((h24 + 11) % 12) + 1;
+                return `${h12}:${m.toString().padStart(2, "0")} ${ampm}`;
+              })()}
+            </p>
           )}
         </div>
       </div>
@@ -185,7 +233,13 @@ export function PillarSleep() {
         ))}
       </div>
 
-      <div className="mt-auto pt-3 flex items-baseline justify-between text-[11.5px] text-[var(--text-muted)] gap-3">
+      <div className="mt-auto pt-3 flex items-baseline justify-between text-[11.5px] text-[var(--text-muted)] gap-3 flex-wrap">
+        {awakeLast != null && (
+          <span className="tabular-nums">
+            <span className="text-[var(--text-dim)]">Awake </span>
+            <span className="text-[var(--text-primary)]">{Math.round(awakeLast)}m</span>
+          </span>
+        )}
         {best && (
           <span>
             <span className="text-[var(--text-dim)]">Best </span>
