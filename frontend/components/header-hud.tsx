@@ -185,41 +185,27 @@ export function HeaderHUD() {
         }}
       >
         {recoveryScore != null && (
-          <>
-            <HudStat
-              label="Readiness"
-              value={String(Math.round(recoveryScore))}
-              color={recoveryColor(recoveryScore)}
-            />
-            <Divider />
-          </>
+          <HudStat
+            label="Readiness"
+            value={String(Math.round(recoveryScore))}
+            color={recoveryColor(recoveryScore)}
+          />
         )}
         {hrv != null && (
-          <>
-            <HudStat label="HRV" value={`${Math.round(hrv)}ms`} />
-            <Divider />
-          </>
+          <HudStat label="HRV" value={`${Math.round(hrv)}ms`} />
         )}
         {rhr != null && (
-          <>
-            <HudStat label="RHR" value={`${Math.round(rhr)}bpm`} />
-            <Divider />
-          </>
+          <HudStat label="RHR" value={`${Math.round(rhr)}bpm`} />
         )}
         {sleepH != null && (
-          <>
-            <HudStat label="Sleep" value={`${sleepH.toFixed(1)}h`} />
-          </>
+          <HudStat label="Sleep" value={`${sleepH.toFixed(1)}h`} />
         )}
         {skinTemp != null && (
-          <>
-            <Divider />
-            <HudStat
-              label="Skin Δ"
-              value={`${skinTemp >= 0 ? "+" : ""}${skinTemp.toFixed(2)}°`}
-              color={Math.abs(skinTemp) >= 0.5 ? "var(--negative)" : "var(--text-primary)"}
-            />
-          </>
+          <HudStat
+            label="Skin Δ"
+            value={`${skinTemp >= 0 ? "+" : ""}${skinTemp.toFixed(2)}°`}
+            color={Math.abs(skinTemp) >= 0.5 ? "var(--negative)" : "var(--text-primary)"}
+          />
         )}
       </div>
     </div>
