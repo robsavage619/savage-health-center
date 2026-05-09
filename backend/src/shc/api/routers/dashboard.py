@@ -2023,14 +2023,21 @@ async def fueling_today() -> dict:
         ).fetchall()
         sums = {r[0]: float(r[1]) for r in rows}
 
-        # Latest body weight (kg) — last 7 days
+        # Latest body weight (kg) — Apple Health (smart scale) preferred, fall back to check-in.
         bw = conn.execute(
             "SELECT value_num FROM measurements "
             "WHERE metric = 'body_mass_kg' AND ts::DATE >= $s "
             "ORDER BY ts DESC LIMIT 1",
-            {"s": (today - timedelta(days=7)).isoformat()},
+            {"s": (today - timedelta(days=30)).isoformat()},
         ).fetchone()
         body_mass_kg = float(bw[0]) if bw else None
+        if body_mass_kg is None:
+            ck = conn.execute(
+                "SELECT body_weight_kg FROM daily_checkin "
+                "WHERE body_weight_kg IS NOT NULL ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+            if ck:
+                body_mass_kg = float(ck[0])
 
         # Latest body fat % and lean mass — last 30 days
         bf = conn.execute(
