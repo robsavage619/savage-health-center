@@ -2438,12 +2438,18 @@ async def clinical_research_insights() -> dict:
         ).fetchone()
         on_prop = bool(prop_today and prop_today[0])
         # Escitalopram is daily — check active medications
-        active_meds = conn.execute(
-            "SELECT LOWER(generic_name) FROM medications "
-            "WHERE end_date IS NULL OR end_date >= $d",
-            {"d": today.isoformat()},
-        ).fetchall()
-        on_ssri = any("escitalopram" in r[0] or "sertraline" in r[0] or "fluoxetine" in r[0] for r in active_meds)
+        try:
+            active_meds = conn.execute(
+                "SELECT LOWER(generic_name) FROM medications "
+                "WHERE valid_to IS NULL OR valid_to >= $d",
+                {"d": today.isoformat()},
+            ).fetchall()
+        except Exception:
+            active_meds = []
+        on_ssri = any(
+            r[0] and ("escitalopram" in r[0] or "sertraline" in r[0] or "fluoxetine" in r[0])
+            for r in active_meds
+        )
 
         adj_factor = 1.0
         if on_prop:

@@ -295,9 +295,10 @@ def _run_strain_high_rhr_next(conn, q: dict) -> LabFinding:
     since = (date.today() - timedelta(days=q["window_days"])).isoformat()
     rows = conn.execute(
         """
-        SELECT date, rhr,
-               (SELECT score_strain FROM cycles WHERE cycles.date = recovery.date LIMIT 1) AS strain
-        FROM recovery WHERE date >= $s AND rhr IS NOT NULL ORDER BY date
+        SELECT r.date, r.rhr,
+               (SELECT MAX(strain) FROM daily_cycle dc
+                WHERE dc.date = r.date) AS strain
+        FROM recovery r WHERE r.date >= $s AND r.rhr IS NOT NULL ORDER BY r.date
         """,
         {"s": since},
     ).fetchall()
