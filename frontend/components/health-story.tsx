@@ -112,6 +112,7 @@ function StoryNarrative({
 const STORY_PROMPT = `Generate Rob's daily health story AND today's workout plan in a single pass.
 
 STEP 1 — Read context.
+If the API is down (ECONNREFUSED), run `zsh /Users/robsavage/Projects/savage-health-center/dev-restart.sh` and wait 8s before fetching.
 - GET http://127.0.0.1:8000/api/briefing/context for live biometrics (recovery, HRV, sleep, gates) AND today's most-relevant vault notes (selected server-side based on signals like HRV anomaly, high ACWR, deload, illness).
 - GET http://127.0.0.1:8000/api/workout/context for training history (also includes the ranked vault notes).
 - Both responses already contain a "## VAULT RESEARCH" section — do not read files from disk.
@@ -137,7 +138,48 @@ Constraints: Never imply propranolol is taken daily — it is PRN/as-needed, ref
 POST to http://127.0.0.1:8000/api/health-story with body { "narrative": "<text>", "sources": [<vault filenames cited>], "model": "claude-sonnet-4-6" }.
 
 STEP 3 — Generate today's workout plan.
-Single JSON object. Optimize for body recomposition (strength + fat loss). Real exercise names and weights from Rob's history. Apply GREEN/YELLOW/RED intensity matrix per recovery score. Always include a metabolic finisher (or Z2 walk on red days).
+Optimize for body recomposition (strength + fat loss). The plan must be a JSON object with these REQUIRED top-level keys (validator rejects missing or misnamed fields):
+
+{
+  "readiness_tier": "green|yellow|red",
+  "recommendation": {
+    "intensity": "high|moderate|low|rest",
+    "focus": "<muscle group or session type>",
+    "rationale": "<≤2 sentences citing actual numbers>",
+    "estimated_duration_min": <number>,
+    "target_rpe": <number>
+  },
+  "warmup": [{"name": "...", "sets": 2, "reps": 10}],
+  "blocks": [
+    {
+      "label": "<block name>",
+      "exercises": [
+        {
+          "name": "<Hevy catalog name verbatim>",
+          "sets": <number>,
+          "reps": "<number or range>",
+          "weight_lbs": <number or null>,
+          "rpe_target": <number>,
+          "rest_seconds": <number>,
+          "notes": "..."
+        }
+      ]
+    }
+  ],
+  "cooldown": "<plain string — not an array>",
+  "clinical_notes": ["<string>", ...],
+  "vault_insights": ["<string>", ...]
+}
+
+Field rules (validator enforces exactly):
+- blocks[].label — NOT "name"; exercises[].name — NOT "exercise"
+- rest_seconds required on EVERY exercise: 180 compounds, 90 accessories, 60 isolation/superset pairs, 0 pure cardio
+- clinical_notes: non-empty array; always include propranolol PRN status + asthma note
+- vault_insights: non-empty array; cite ≥2 vault research sources
+- Exercise names verbatim from AVAILABLE HEVY EXERCISES in the workout context
+- weight_lbs only from WORKING WEIGHTS; null if not listed — never invent a weight
+- Always include a metabolic finisher block (or Z2 walk on red/deload days)
+
 POST to http://127.0.0.1:8000/api/workout/plan with body { "plan": <plan>, "source": "claude_code", "push_to_hevy": false }.
 
 Confirm both POSTs succeeded.`;
