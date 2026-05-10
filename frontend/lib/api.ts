@@ -330,6 +330,8 @@ export interface DailyStateRecovery {
   skin_temp_delta: number | null;
   spo2_pct: number | null;
   user_calibrating: boolean | null;
+  respiratory_rate_baseline_28d: number | null;
+  respiratory_rate_delta: number | null;
 }
 
 export interface DailyStateSleep {
@@ -377,6 +379,9 @@ export interface DailyStateLoad {
   legs_sets_28d: number;
   cardio_min_28d: number;
   cardio_z2_min_7d: number;
+  cardio_zone_min_7d: Record<string, number>;
+  max_hr_measured: number | null;
+  max_hr_tanaka: number | null;
 }
 
 export interface DailyStateCheckin {

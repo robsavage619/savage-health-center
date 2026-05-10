@@ -46,6 +46,9 @@ BETA_BLOCKER_NAMES = (
 PROPRANOLOL_HR_SHIFT_BPM = 20
 PROPRANOLOL_KCAL_MULT = 1.25
 
+# Single-user platform — Rob's birth-date constant matches the frontend.
+_ROB_AGE = 40
+
 # Readiness weights — collapsed from frontend lib/readiness.ts so they live in
 # exactly one place.
 DEFAULT_WEIGHTS = {"hrv": 0.40, "sleep": 0.30, "rhr": 0.20, "subj": 0.10}
@@ -74,6 +77,8 @@ class RecoveryMetrics:
     skin_temp_delta: float | None = None
     spo2_pct: float | None = None            # WHOOP recovery-night SpO2 (clinical: <95% sleep-disordered breathing)
     user_calibrating: bool | None = None     # WHOOP still calibrating — score is unreliable
+    respiratory_rate_baseline_28d: float | None = None
+    respiratory_rate_delta: float | None = None  # bpm above 28d baseline (Bourdillon: +1 bpm = illness sentinel)
 
 
 @dataclass
@@ -123,6 +128,9 @@ class TrainingLoadMetrics:
     legs_sets_28d: int = 0
     cardio_min_28d: int = 0
     cardio_z2_min_7d: int = 0
+    cardio_zone_min_7d: dict[str, float] = field(default_factory=dict)  # {z0:.., z1:.., ..., z5:..} from WHOOP
+    max_hr_measured: int | None = None       # WHOOP-measured max HR (preferred over Tanaka formula)
+    max_hr_tanaka: int | None = None         # 208 - 0.7 × age (population formula, fallback)
 
 
 @dataclass
@@ -366,6 +374,26 @@ def _recovery(conn, today: date) -> RecoveryMetrics:
         m.skin_temp_baseline_28d = round(float(skin_baseline[0]), 2)
         if m.skin_temp is not None:
             m.skin_temp_delta = round(m.skin_temp - m.skin_temp_baseline_28d, 2)
+
+    # Respiratory rate baseline (28d, naps excluded). WHOOP/Bourdillon: a +1 bpm
+    # rise above baseline is an early-warning illness sentinel ~4 days out.
+    # Clamp to physiologically plausible adult sleep RR (8–30 bpm) so legacy
+    # data corruption doesn't poison the baseline.
+    rr_rows = conn.execute(
+        "SELECT respiratory_rate FROM sleep "
+        "WHERE COALESCE(is_nap, FALSE) = FALSE "
+        "  AND respiratory_rate IS NOT NULL "
+        "  AND respiratory_rate BETWEEN 8 AND 30 "
+        "  AND night_date >= $s "
+        "ORDER BY night_date",
+        {"s": (today - timedelta(days=28)).isoformat()},
+    ).fetchall()
+    rr_vals = [float(r[0]) for r in rr_rows]
+    if rr_vals:
+        # Use median for robustness against any remaining outliers.
+        m.respiratory_rate_baseline_28d = round(_st.median(rr_vals), 2)
+        last_rr = rr_vals[-1]
+        m.respiratory_rate_delta = round(last_rr - m.respiratory_rate_baseline_28d, 2)
     return m
 
 
@@ -533,18 +561,76 @@ def _training_load(conn, today: date) -> TrainingLoadMetrics:
     if cardio and cardio[0] is not None:
         m.cardio_min_28d = int(cardio[0])
 
-    z2 = conn.execute(
+    # Z2 (and full HR-zone breakdown) — prefer WHOOP's authoritative zone
+    # durations on each workout. Falls back to inferring from avg_hr when
+    # zone data isn't present (older imports, manual cardio entries).
+    zone_row = conn.execute(
         """
-        SELECT COALESCE(SUM(duration_min), 0)
-        FROM cardio_sessions
-        WHERE date >= (current_date - INTERVAL '7 days')
-          AND avg_hr IS NOT NULL
-          AND avg_hr BETWEEN 110 AND 145
+        SELECT
+            COALESCE(SUM(zone_zero_min),  0) AS z0,
+            COALESCE(SUM(zone_one_min),   0) AS z1,
+            COALESCE(SUM(zone_two_min),   0) AS z2,
+            COALESCE(SUM(zone_three_min), 0) AS z3,
+            COALESCE(SUM(zone_four_min),  0) AS z4,
+            COALESCE(SUM(zone_five_min),  0) AS z5
+        FROM workouts
+        WHERE started_at >= (current_date - INTERVAL '7 days')
         """
     ).fetchone()
-    if z2 and z2[0] is not None:
-        m.cardio_z2_min_7d = int(z2[0])
+    zone_total = sum(zone_row) if zone_row else 0
+    if zone_total > 0:
+        m.cardio_zone_min_7d = {
+            "z0": round(float(zone_row[0]), 1),
+            "z1": round(float(zone_row[1]), 1),
+            "z2": round(float(zone_row[2]), 1),
+            "z3": round(float(zone_row[3]), 1),
+            "z4": round(float(zone_row[4]), 1),
+            "z5": round(float(zone_row[5]), 1),
+        }
+        m.cardio_z2_min_7d = int(round(float(zone_row[2])))
+    else:
+        # Fallback: HR-range inference using whichever max HR we have.
+        # 60–70% of max = Z2 (Seiler / polarized model).
+        max_hr = _latest_max_hr(conn) or 180  # 180 = Tanaka @ age 40
+        z2_low = int(round(0.60 * max_hr))
+        z2_high = int(round(0.70 * max_hr))
+        z2 = conn.execute(
+            f"""
+            SELECT COALESCE(SUM(duration_min), 0)
+            FROM cardio_sessions
+            WHERE date >= (current_date - INTERVAL '7 days')
+              AND avg_hr IS NOT NULL
+              AND avg_hr BETWEEN {z2_low} AND {z2_high}
+            """
+        ).fetchone()
+        if z2 and z2[0] is not None:
+            m.cardio_z2_min_7d = int(z2[0])
+
+    # Max HR — prefer WHOOP-measured, fall back to Tanaka formula.
+    m.max_hr_measured = _latest_max_hr(conn)
+    age_today = _age_today(conn)
+    if age_today is not None:
+        m.max_hr_tanaka = int(round(208 - 0.7 * age_today))
     return m
+
+
+def _latest_max_hr(conn) -> int | None:
+    """Most recent WHOOP-measured max HR from body_measurement."""
+    try:
+        row = conn.execute(
+            "SELECT max_heart_rate FROM body_measurement "
+            "WHERE max_heart_rate IS NOT NULL "
+            "ORDER BY measured_at DESC LIMIT 1"
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+    except Exception:
+        # body_measurement may not exist on older schemas.
+        return None
+
+
+def _age_today(conn) -> int | None:
+    """Rob's age. Single-user platform — hardcoded constant matches frontend."""
+    return _ROB_AGE
 
 
 def _checkin(conn, today: date) -> CheckinMetrics:
@@ -664,6 +750,33 @@ def _gates(
         # Clinical threshold for sleep-disordered breathing / hypoxia overnight.
         g.max_intensity = "low" if g.max_intensity == "high" else g.max_intensity
         reasons.append(f"Overnight SpO₂ {rec.spo2_pct:.1f}% < 92% — cap intensity LOW")
+
+    # Respiratory-rate sentinel — Bourdillon et al. RR baseline drift is a 4-day
+    # leading indicator for viral illness. +1 bpm above 28d baseline = high
+    # specificity early warning; +0.5 bpm = elevated suspicion.
+    if rec.respiratory_rate_delta is not None:
+        if rec.respiratory_rate_delta >= 1.0:
+            if g.max_intensity == "high":
+                g.max_intensity = "moderate"
+            reasons.append(
+                f"Resp rate +{rec.respiratory_rate_delta:.1f} bpm vs baseline — "
+                "early-warning illness signal, cap MODERATE"
+            )
+        elif rec.respiratory_rate_delta >= 0.5:
+            reasons.append(
+                f"Resp rate +{rec.respiratory_rate_delta:.1f} bpm vs baseline — "
+                "watch for additional illness signs"
+            )
+
+    # Sleep architecture: <4 sleep cycles is structurally inadequate even when
+    # total hours look fine (Vitale 2019; one full cycle = ~90 min, 4 cycles is
+    # the minimum for full REM/SWS recovery).
+    if sleep.sleep_cycle_count_last is not None and sleep.sleep_cycle_count_last < 4:
+        if g.max_intensity == "high":
+            g.max_intensity = "moderate"
+        reasons.append(
+            f"Only {sleep.sleep_cycle_count_last} sleep cycles — fragmented architecture, cap MODERATE"
+        )
 
     # Sleep-quality gates (WHOOP sleep score breakdown).
     if sleep.efficiency_pct_last is not None and sleep.efficiency_pct_last < 75:

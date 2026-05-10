@@ -235,6 +235,13 @@ def build_daily_context(conn) -> str:
         lines.append(f"Skin temp: {temp_f:.1f}°F (Δ {delta_f:+.1f}°F vs 28d)")
     if rec.get("spo2_pct") is not None:
         lines.append(f"Overnight SpO₂ (recovery): {rec['spo2_pct']:.1f}%")
+    if rec.get("respiratory_rate_delta") is not None and rec.get("respiratory_rate_baseline_28d") is not None:
+        delta = rec["respiratory_rate_delta"]
+        flag = " ⚠ illness sentinel" if delta >= 1.0 else ""
+        lines.append(
+            f"Resp rate Δ {delta:+.2f} bpm vs 28d baseline "
+            f"({rec['respiratory_rate_baseline_28d']:.2f} bpm){flag}"
+        )
     if rec.get("user_calibrating"):
         lines.append("⚠ WHOOP user_calibrating=true — recovery score may be unreliable")
 
@@ -307,6 +314,24 @@ def build_daily_context(conn) -> str:
             f"Last session: {load['days_since_last']}d ago "
             f"(legs {load['days_since_legs']}d, push {load['days_since_push']}d, pull {load['days_since_pull']}d)"
         )
+    # Max HR — surface measured value so the LLM uses correct zones.
+    if load.get("max_hr_measured"):
+        formula = (
+            f" (vs Tanaka {load['max_hr_tanaka']})" if load.get("max_hr_tanaka") else ""
+        )
+        lines.append(f"Max HR (WHOOP-measured): {load['max_hr_measured']} bpm{formula}")
+    # Cardio HR zone distribution (last 7 days, WHOOP-authoritative).
+    zones = load.get("cardio_zone_min_7d") or {}
+    if zones and any(zones.values()):
+        z_total = sum(zones.values())
+        if z_total > 0:
+            parts = [
+                f"{k.upper()} {int(v)}m ({v/z_total*100:.0f}%)"
+                for k, v in sorted(zones.items())
+                if v > 0
+            ]
+            lines.append(f"HR zone mix (7d, {int(z_total)}m total): {', '.join(parts)}")
+
     if load["push_pull_ratio_28d"] is not None:
         lines.append(
             f"28d sets: push {load['push_sets_28d']} | pull {load['pull_sets_28d']} | "
