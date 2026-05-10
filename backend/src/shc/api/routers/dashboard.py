@@ -116,15 +116,24 @@ async def sleep_recent(days: int = Query(7, gt=0, le=365)) -> list[dict]:
     conn = get_read_conn()
     try:
         rows = conn.execute(
-            "SELECT night_date, stages_json, spo2_avg, rhr, "
+            "SELECT night_date, stages_json, spo2_avg, respiratory_rate, "
             "epoch(ts_out - ts_in) / 3600.0 AS hours "
-            "FROM sleep WHERE night_date >= $since ORDER BY night_date",
+            "FROM sleep WHERE night_date >= $since "
+            "  AND COALESCE(is_nap, FALSE) = FALSE "
+            "  AND ts_in IS NOT NULL AND ts_out IS NOT NULL "
+            "ORDER BY night_date",
             {"since": since},
         ).fetchall()
     finally:
         conn.close()
     return [
-        {"date": str(r[0]), "stages": r[1], "spo2": r[2], "rhr": r[3], "hours": r[4]}
+        {
+            "date": str(r[0]),
+            "stages": r[1],
+            "spo2": r[2],
+            "respiratory_rate": r[3],
+            "hours": r[4],
+        }
         for r in rows
     ]
 
