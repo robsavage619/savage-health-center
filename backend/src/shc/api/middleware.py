@@ -19,7 +19,12 @@ class HostOriginMiddleware(BaseHTTPMiddleware):
         host = request.headers.get("host", "")
         expected_host = f"{settings.host}:{settings.port}"
 
-        if host and host not in (expected_host, f"localhost:{settings.port}"):
+        allowed_hosts = {expected_host, f"localhost:{settings.port}"}
+        if settings.tailscale_host:
+            allowed_hosts.add(settings.tailscale_host)
+            allowed_hosts.add(f"{settings.tailscale_host}:{settings.port}")
+
+        if host and host not in allowed_hosts:
             log.warning("rejected request with Host: %s", host)
             return Response("Forbidden", status_code=403)
 

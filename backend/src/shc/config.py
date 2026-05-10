@@ -72,10 +72,17 @@ class Settings(BaseSettings):
     # Hevy
     hevy_api_key: str | None = Field(default=None)
 
+    # Apple Health webhook (HAE / Shortcuts)
+    # Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    apple_webhook_key: str | None = Field(default=None)
+
     # Server
     host: str = "127.0.0.1"
     port: int = 8000
     frontend_origin: str = "http://localhost:3000"
+    # Tailscale hostname (e.g. "my-mac.tail1234.ts.net") — added to allowed Host headers
+    # so Health Auto Export can POST from iPhone over Tailscale.
+    tailscale_host: str | None = Field(default=None)
 
 
 settings = Settings()
