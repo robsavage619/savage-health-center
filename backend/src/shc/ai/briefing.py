@@ -233,13 +233,67 @@ def build_daily_context(conn) -> str:
         temp_f = rec["skin_temp"] * 9 / 5 + 32
         delta_f = rec["skin_temp_delta"] * 9 / 5
         lines.append(f"Skin temp: {temp_f:.1f}°F (Δ {delta_f:+.1f}°F vs 28d)")
+    if rec.get("spo2_pct") is not None:
+        lines.append(f"Overnight SpO₂ (recovery): {rec['spo2_pct']:.1f}%")
+    if rec.get("user_calibrating"):
+        lines.append("⚠ WHOOP user_calibrating=true — recovery score may be unreliable")
 
-    # Sleep.
+    # Sleep — full architecture, not just hours.
     if sleep["last_hours"] is not None:
-        deep = f", deep {sleep['deep_pct_last']*100:.0f}%" if sleep["deep_pct_last"] else ""
-        spo2 = f", SpO₂ {sleep['spo2_avg_last']:.1f}%" if sleep["spo2_avg_last"] else ""
-        avg = f" · 7d avg {sleep['avg_7d']:.1f}h" if sleep["avg_7d"] else ""
-        lines.append(f"Sleep: {sleep['last_hours']:.1f}h{deep}{spo2}{avg}")
+        parts = [f"{sleep['last_hours']:.1f}h asleep"]
+        if sleep.get("in_bed_min_last"):
+            parts.append(f"{sleep['in_bed_min_last']/60:.1f}h in bed")
+        if sleep.get("efficiency_pct_last") is not None:
+            parts.append(f"efficiency {sleep['efficiency_pct_last']:.0f}%")
+        if sleep.get("performance_pct_last") is not None:
+            parts.append(f"performance {sleep['performance_pct_last']:.0f}%")
+        if sleep.get("consistency_pct_last") is not None:
+            parts.append(f"consistency {sleep['consistency_pct_last']:.0f}%")
+        lines.append(f"Sleep: {' · '.join(parts)}")
+
+        # Stage architecture (deep / REM / light / awake) in minutes + pct.
+        stage_parts: list[str] = []
+        if sleep.get("deep_min_last") and sleep.get("deep_pct_last") is not None:
+            stage_parts.append(f"deep {sleep['deep_min_last']:.0f}m ({sleep['deep_pct_last']*100:.0f}%)")
+        if sleep.get("rem_min_last") and sleep.get("rem_pct_last") is not None:
+            stage_parts.append(f"REM {sleep['rem_min_last']:.0f}m ({sleep['rem_pct_last']*100:.0f}%)")
+        if sleep.get("light_min_last"):
+            stage_parts.append(f"light {sleep['light_min_last']:.0f}m")
+        if sleep.get("awake_min_last"):
+            stage_parts.append(f"awake {sleep['awake_min_last']:.0f}m")
+        if stage_parts:
+            lines.append(f"  Stages: {', '.join(stage_parts)}")
+
+        extras: list[str] = []
+        if sleep.get("sleep_cycle_count_last"):
+            extras.append(f"{sleep['sleep_cycle_count_last']} cycles")
+        if sleep.get("disturbance_count_last") is not None:
+            extras.append(f"{sleep['disturbance_count_last']} disturbances")
+        if sleep.get("respiratory_rate_last"):
+            extras.append(f"resp rate {sleep['respiratory_rate_last']:.1f} bpm")
+        if sleep.get("spo2_avg_last"):
+            extras.append(f"SpO₂ {sleep['spo2_avg_last']:.1f}%")
+        if extras:
+            lines.append(f"  Quality: {', '.join(extras)}")
+
+        # Sleep need attribution (baseline + debt + strain - nap_credit).
+        need_parts: list[str] = []
+        if sleep.get("sleep_need_baseline_min_last"):
+            need_parts.append(f"baseline {sleep['sleep_need_baseline_min_last']/60:.1f}h")
+        if sleep.get("sleep_need_debt_min_last"):
+            need_parts.append(f"+debt {sleep['sleep_need_debt_min_last']/60:.1f}h")
+        if sleep.get("sleep_need_strain_min_last"):
+            need_parts.append(f"+strain {sleep['sleep_need_strain_min_last']/60:.1f}h")
+        if sleep.get("sleep_need_nap_min_last"):
+            need_parts.append(f"−nap {sleep['sleep_need_nap_min_last']/60:.1f}h")
+        if need_parts and sleep.get("sleep_needed_min_last"):
+            lines.append(
+                f"  Sleep need: {sleep['sleep_needed_min_last']/60:.1f}h "
+                f"= {' '.join(need_parts)}"
+            )
+
+        if sleep.get("avg_7d"):
+            lines.append(f"  7d avg: {sleep['avg_7d']:.1f}h")
 
     # Training load — TRUE ACWR from session strain.
     if load["acwr"] is not None:

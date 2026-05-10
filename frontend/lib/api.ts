@@ -328,6 +328,8 @@ export interface DailyStateRecovery {
   skin_temp: number | null;
   skin_temp_baseline_28d: number | null;
   skin_temp_delta: number | null;
+  spo2_pct: number | null;
+  user_calibrating: boolean | null;
 }
 
 export interface DailyStateSleep {
@@ -345,7 +347,15 @@ export interface DailyStateSleep {
   consistency_pct_last: number | null;
   performance_pct_last: number | null;
   disturbance_count_last: number | null;
+  sleep_cycle_count_last: number | null;
+  in_bed_min_last: number | null;
+  no_data_min_last: number | null;
   sleep_needed_min_last: number | null;
+  sleep_need_baseline_min_last: number | null;
+  sleep_need_debt_min_last: number | null;
+  sleep_need_strain_min_last: number | null;
+  sleep_need_nap_min_last: number | null;
+  respiratory_rate_last: number | null;
   midpoint_local_h_last: number | null;
   midpoint_stdev_h_7d: number | null;
   spo2_avg_last: number | null;

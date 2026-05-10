@@ -72,6 +72,8 @@ class RecoveryMetrics:
     skin_temp: float | None = None
     skin_temp_baseline_28d: float | None = None
     skin_temp_delta: float | None = None
+    spo2_pct: float | None = None            # WHOOP recovery-night SpO2 (clinical: <95% sleep-disordered breathing)
+    user_calibrating: bool | None = None     # WHOOP still calibrating — score is unreliable
 
 
 @dataclass
@@ -90,7 +92,15 @@ class SleepMetrics:
     consistency_pct_last: float | None = None
     performance_pct_last: float | None = None
     disturbance_count_last: int | None = None
+    sleep_cycle_count_last: int | None = None
+    in_bed_min_last: float | None = None
+    no_data_min_last: float | None = None
     sleep_needed_min_last: float | None = None
+    sleep_need_baseline_min_last: float | None = None   # base sleep need for body
+    sleep_need_debt_min_last: float | None = None       # added need from accumulated debt
+    sleep_need_strain_min_last: float | None = None     # added need from yesterday's strain
+    sleep_need_nap_min_last: float | None = None        # credit from naps
+    respiratory_rate_last: float | None = None          # breaths/min during sleep
     midpoint_local_h_last: float | None = None   # decimal local hours, 0-24
     midpoint_stdev_h_7d: float | None = None     # social jet-lag proxy
     spo2_avg_last: float | None = None       # < 95% is a clinical flag for sleep-disordered breathing
@@ -312,7 +322,8 @@ def _tier(score: float | None) -> Tier | None:
 
 def _recovery(conn, today: date) -> RecoveryMetrics:
     rec = conn.execute(
-        "SELECT date, score, hrv, rhr, skin_temp FROM recovery ORDER BY date DESC LIMIT 1"
+        "SELECT date, score, hrv, rhr, skin_temp, spo2, user_calibrating "
+        "FROM recovery ORDER BY date DESC LIMIT 1"
     ).fetchone()
     hrv_base = conn.execute(
         "SELECT hrv, hrv_28d_avg, hrv_28d_sd FROM v_hrv_baseline_28d ORDER BY date DESC LIMIT 1"
@@ -333,6 +344,8 @@ def _recovery(conn, today: date) -> RecoveryMetrics:
         m.hrv_ms = float(rec[2]) if rec[2] is not None else None
         m.rhr = int(rec[3]) if rec[3] is not None else None
         m.skin_temp = float(rec[4]) if rec[4] is not None else None
+        m.spo2_pct = float(rec[5]) if rec[5] is not None else None
+        m.user_calibrating = bool(rec[6]) if rec[6] is not None else None
     if hrv_base:
         m.hrv_baseline_28d = float(hrv_base[1]) if hrv_base[1] is not None else None
         m.hrv_sd_28d = float(hrv_base[2]) if hrv_base[2] is not None else None
@@ -362,7 +375,10 @@ def _sleep(conn, today: date) -> SleepMetrics:
         "       sws_min, rem_min, light_min, awake_min, "
         "       sleep_efficiency_pct, sleep_consistency_pct, sleep_performance_pct, "
         "       disturbance_count, sleep_needed_min, spo2_avg, "
-        "       ts_in, ts_out, stages_json "
+        "       ts_in, ts_out, stages_json, "
+        "       sleep_cycle_count, in_bed_min, no_data_min, "
+        "       sleep_need_baseline_min, sleep_need_debt_min, sleep_need_strain_min, "
+        "       sleep_need_nap_min, respiratory_rate "
         "FROM sleep WHERE night_date >= $s AND ts_in IS NOT NULL AND ts_out IS NOT NULL "
         "  AND COALESCE(is_nap, FALSE) = FALSE "
         "ORDER BY night_date, ts_in",
@@ -419,6 +435,14 @@ def _sleep(conn, today: date) -> SleepMetrics:
     m.disturbance_count_last = int(last[9]) if last[9] is not None else None
     m.sleep_needed_min_last = round(float(last[10]), 1) if last[10] is not None else None
     m.spo2_avg_last = round(float(last[11]), 1) if last[11] is not None else None
+    m.sleep_cycle_count_last = int(last[15]) if last[15] is not None else None
+    m.in_bed_min_last = round(float(last[16]), 1) if last[16] is not None else None
+    m.no_data_min_last = round(float(last[17]), 1) if last[17] is not None else None
+    m.sleep_need_baseline_min_last = round(float(last[18]), 1) if last[18] is not None else None
+    m.sleep_need_debt_min_last = round(float(last[19]), 1) if last[19] is not None else None
+    m.sleep_need_strain_min_last = round(float(last[20]), 1) if last[20] is not None else None
+    m.sleep_need_nap_min_last = round(float(last[21]), 1) if last[21] is not None else None
+    m.respiratory_rate_last = round(float(last[22]), 1) if last[22] is not None else None
 
     # Sleep midpoint: ts_in + (ts_out - ts_in) / 2, expressed as decimal local hours.
     def _midpoint_hours(ts_in, ts_out) -> float | None:
@@ -633,6 +657,35 @@ def _gates(
         delta_f = rec.skin_temp_delta * 9 / 5
         g.max_intensity = "low"
         reasons.append(f"Skin-temp Δ+{delta_f:.1f}°F above baseline — possible illness, Z2 only")
+    if rec.user_calibrating:
+        # WHOOP recovery score is unreliable while calibrating — flag it but don't gate.
+        reasons.append("WHOOP user_calibrating=true — recovery score may be unreliable")
+    if rec.spo2_pct is not None and rec.spo2_pct < 92.0:
+        # Clinical threshold for sleep-disordered breathing / hypoxia overnight.
+        g.max_intensity = "low" if g.max_intensity == "high" else g.max_intensity
+        reasons.append(f"Overnight SpO₂ {rec.spo2_pct:.1f}% < 92% — cap intensity LOW")
+
+    # Sleep-quality gates (WHOOP sleep score breakdown).
+    if sleep.efficiency_pct_last is not None and sleep.efficiency_pct_last < 75:
+        if g.max_intensity == "high":
+            g.max_intensity = "moderate"
+        reasons.append(
+            f"Sleep efficiency {sleep.efficiency_pct_last:.0f}% < 75% — cap MODERATE"
+        )
+    if sleep.disturbance_count_last is not None and sleep.disturbance_count_last >= 12:
+        # Highly fragmented night → poor restoration even with adequate hours.
+        if g.max_intensity == "high":
+            g.max_intensity = "moderate"
+        reasons.append(
+            f"Sleep disturbances {sleep.disturbance_count_last} ≥ 12 — fragmented night, cap MODERATE"
+        )
+    if sleep.performance_pct_last is not None and sleep.performance_pct_last < 60:
+        # Sleep need badly missed — recovery debt large enough to matter.
+        if g.max_intensity == "high":
+            g.max_intensity = "moderate"
+        reasons.append(
+            f"Sleep performance {sleep.performance_pct_last:.0f}% < 60% — sleep debt, cap MODERATE"
+        )
     if chk.illness_flag:
         g.max_intensity = "rest"
         reasons.append("Illness flag set — rest day")

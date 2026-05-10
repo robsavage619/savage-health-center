@@ -2921,6 +2921,172 @@ async def briefing_context() -> dict:
     return {"context": context}
 
 
+@router.get("/daily/brief")
+async def daily_brief_slim() -> dict:
+    """Slim, LLM-optimized combined daily brief.
+
+    Designed to be < 50KB so a Claude Code session can fit it in main context
+    without delegating to a sub-agent. Returns:
+
+    - `state`: full DailyState snapshot (DTO from `compute_daily_state`)
+    - `vault`: top 5 vault notes, each trimmed to summary + first 800 chars
+    - `training`: last 7 days of sessions, top 20 working weights, available
+                  Hevy exercise names (compact form), volume targets, mesocycle
+                  position. Same numbers as `/api/workout/context` but JSON
+                  rather than rendered text.
+
+    Use this instead of `/api/briefing/context` + `/api/workout/context`
+    whenever you don't need the full vault-research excerpts.
+    """
+    from shc.ai.vault import _get_index, state_signals
+
+    conn = get_read_conn()
+    try:
+        state_d = compute_daily_state(conn)  # already a dict
+        signals = state_signals(state_d)
+        index = _get_index()
+        notes = index.query(signals=signals, limit=5) if index else []
+        vault_payload = [
+            {
+                "filename": n.filename,
+                "title": n.title,
+                "tags": n.tags,
+                "summary": n.summary,
+                "excerpt": (n.excerpt or "")[:800],
+            }
+            for n in notes
+        ]
+
+        # Extract structured training data — no rendered text.
+        training = _slim_training_context(conn, today=date.today(), state=state_d)
+    finally:
+        conn.close()
+
+    return {
+        "as_of": state_d["as_of"],
+        "state": state_d,
+        "vault": vault_payload,
+        "training": training,
+        "signals": sorted(signals),
+    }
+
+
+def _slim_training_context(conn, today: date, state: dict) -> dict:
+    """Extract the structured training data the planner needs — no rendered text."""
+    # Last 7 days of sessions (one row per workout, abbreviated).
+    sessions_rows = conn.execute(
+        """
+        SELECT w.id, w.started_at::DATE AS d, w.kind,
+               COUNT(ws.id) AS n_sets,
+               ROUND(SUM(ws.weight_kg * ws.reps) / 1000.0, 1) AS tonnes,
+               STRING_AGG(DISTINCT ws.exercise, ' | ') AS exercises
+        FROM workouts w
+        LEFT JOIN workout_sets_dedup ws ON ws.workout_id = w.id AND ws.is_warmup = FALSE
+        WHERE w.started_at >= (current_date - INTERVAL '7 days')
+        GROUP BY w.id, d, w.kind
+        ORDER BY d DESC
+        LIMIT 20
+        """
+    ).fetchall()
+    sessions = [
+        {
+            "date": str(r[1]) if r[1] else None,
+            "kind": r[2],
+            "n_sets": int(r[3]) if r[3] else 0,
+            "tonnes": float(r[4]) if r[4] else None,
+            "exercises": (r[5] or "").split(" | ")[:6],
+        }
+        for r in sessions_rows
+    ]
+
+    # Top 20 working weights (most recently updated).
+    ww_rows = conn.execute(
+        """
+        SELECT exercise, weight_kg, updated_at
+        FROM working_weights
+        ORDER BY updated_at DESC
+        LIMIT 20
+        """
+    ).fetchall()
+    working_weights = [
+        {
+            "exercise": r[0],
+            "weight_lbs": round(float(r[1]) * 2.20462, 1) if r[1] else None,
+            "updated_at": str(r[2]) if r[2] else None,
+        }
+        for r in ww_rows
+    ]
+
+    # Available Hevy exercises grouped by primary muscle (compact list — name only).
+    try:
+        avail_rows = conn.execute(
+            "SELECT primary_muscle_group, title FROM hevy_exercise_templates "
+            "ORDER BY primary_muscle_group, title"
+        ).fetchall()
+        available_by_group: dict[str, list[str]] = {}
+        for grp, name in avail_rows:
+            available_by_group.setdefault(grp or "other", []).append(name)
+    except Exception:
+        available_by_group = {}
+
+    # Mesocycle position (compute week index from started_on).
+    mesocycle = None
+    if _table_exists(conn, "mesocycles"):
+        meso_row = conn.execute(
+            """
+            SELECT id, started_on, planned_weeks, status, deload_week
+            FROM mesocycles
+            WHERE started_on <= current_date
+              AND (ended_on IS NULL OR ended_on >= current_date)
+            ORDER BY started_on DESC LIMIT 1
+            """
+        ).fetchone()
+        if meso_row:
+            started_on = meso_row[1]
+            week_index = ((today - started_on).days // 7) + 1 if started_on else None
+            mesocycle = {
+                "started_on": str(started_on) if started_on else None,
+                "week_index": week_index,
+                "planned_weeks": int(meso_row[2]) if meso_row[2] is not None else None,
+                "status": meso_row[3],
+                "deload_week": int(meso_row[4]) if meso_row[4] is not None else None,
+            }
+
+    return {
+        "last_7d_sessions": sessions,
+        "working_weights_top20": working_weights,
+        "available_exercises_by_group": available_by_group,
+        "mesocycle": mesocycle,
+        "muscle_balance_28d": {
+            "push_sets": state["training_load"]["push_sets_28d"],
+            "pull_sets": state["training_load"]["pull_sets_28d"],
+            "legs_sets": state["training_load"]["legs_sets_28d"],
+            "push_pull_ratio": state["training_load"]["push_pull_ratio_28d"],
+        },
+        "acwr": {
+            "value": state["training_load"]["acwr"],
+            "acute_7d": state["training_load"]["acute_load_7d"],
+            "chronic_28d": state["training_load"]["chronic_load_28d"],
+        },
+        "rest_status": {
+            "days_since_legs": state["training_load"]["days_since_legs"],
+            "days_since_push": state["training_load"]["days_since_push"],
+            "days_since_pull": state["training_load"]["days_since_pull"],
+        },
+    }
+
+
+def _table_exists(conn, name: str) -> bool:
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = $n",
+            {"n": name},
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
+
 @router.post("/briefing")
 async def submit_briefing(body: BriefingSubmission) -> dict:
     """Accept a Claude-generated daily briefing and persist it."""
