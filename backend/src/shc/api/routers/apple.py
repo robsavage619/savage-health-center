@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,6 +18,31 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["apple"])
 
 _key_header = APIKeyHeader(name="X-SHC-Key", auto_error=False)
+
+
+_SHORTCUTS_DATE_FMTS = [
+    "%B %d, %Y at %I:%M %p",   # May 10, 2026 at 9:17 PM
+    "%B %d, %Y at %I:%M:%S %p",# May 10, 2026 at 9:17:00 PM
+    "%Y-%m-%dT%H:%M:%S%z",     # ISO 8601 with tz
+    "%Y-%m-%dT%H:%M:%S",       # ISO 8601 no tz
+    "%Y-%m-%d %H:%M:%S%z",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d",
+]
+
+
+def _parse_ts(raw: str) -> str:
+    """Parse whatever date string Shortcuts sends → ISO 8601 for DuckDB."""
+    for fmt in _SHORTCUTS_DATE_FMTS:
+        try:
+            dt = datetime.strptime(raw.strip(), fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.isoformat()
+        except ValueError:
+            continue
+    log.warning("unparseable date %r — using now()", raw)
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _require_key(key: Annotated[str | None, Depends(_key_header)]) -> None:
@@ -142,14 +168,15 @@ async def apple_shortcut_webhook(request: Request) -> dict[str, Any]:
     # Shape A (ideal):  {"date": "...", "metrics": {hrv_sdnn: 45, ...}}
     # Shape B (nested): {"metrics": {"date": "...", "metrics": {hrv_sdnn: 45, ...}}}
     # Shape C (flat):   {hrv_sdnn: 45, "date": "...", ...}
-    ts_raw: str = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
     inner = data.get("metrics", data)
     if isinstance(inner, dict) and "metrics" in inner:
         # Shape B — one extra nesting level
-        ts_raw = str(inner.get("date") or ts_raw)
+        ts_raw: str = _parse_ts(str(inner.get("date") or now_iso))
         metrics: dict = inner.get("metrics", {})
     elif isinstance(inner, dict):
-        ts_raw = str(data.get("date") or inner.get("date") or ts_raw)
+        raw_date = data.get("date") or inner.get("date") or now_iso
+        ts_raw = _parse_ts(str(raw_date))
         metrics = {k: v for k, v in inner.items() if k != "date"}
     else:
         raise HTTPException(status_code=400, detail=f"could not find metrics in payload: {data}")
