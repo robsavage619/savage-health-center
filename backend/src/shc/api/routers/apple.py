@@ -138,11 +138,24 @@ async def apple_shortcut_webhook(request: Request) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"invalid JSON: {exc}") from exc
 
-    metrics: dict = data.get("metrics", {})
-    if not isinstance(metrics, dict) or not metrics:
-        raise HTTPException(status_code=400, detail="'metrics' dict is required and must be non-empty")
+    # Shortcuts wraps things unpredictably — unwrap until we find the metrics dict.
+    # Shape A (ideal):  {"date": "...", "metrics": {hrv_sdnn: 45, ...}}
+    # Shape B (nested): {"metrics": {"date": "...", "metrics": {hrv_sdnn: 45, ...}}}
+    # Shape C (flat):   {hrv_sdnn: 45, "date": "...", ...}
+    ts_raw: str = datetime.now(timezone.utc).isoformat()
+    inner = data.get("metrics", data)
+    if isinstance(inner, dict) and "metrics" in inner:
+        # Shape B — one extra nesting level
+        ts_raw = str(inner.get("date") or ts_raw)
+        metrics: dict = inner.get("metrics", {})
+    elif isinstance(inner, dict):
+        ts_raw = str(data.get("date") or inner.get("date") or ts_raw)
+        metrics = {k: v for k, v in inner.items() if k != "date"}
+    else:
+        raise HTTPException(status_code=400, detail=f"could not find metrics in payload: {data}")
 
-    ts_raw: str = data.get("date") or datetime.now(timezone.utc).isoformat()
+    if not metrics:
+        raise HTTPException(status_code=400, detail="metrics dict is empty")
 
     inserted = 0
     skipped: list[str] = []
