@@ -74,7 +74,6 @@ _SHORTCUT_UNITS: dict[str, tuple[str, str]] = {
     "bp_systolic":           ("bp_systolic",           "mmHg"),
     "bp_diastolic":          ("bp_diastolic",          "mmHg"),
     # Cardio / recovery
-    "vo2_max":               ("vo2_max",               "mL/kg/min"),
     "walking_heart_rate_avg":("walking_heart_rate_avg","bpm"),
     "hr_recovery_1min":      ("hr_recovery_1min",      "bpm"),
     # Activity (unit-neutral)
