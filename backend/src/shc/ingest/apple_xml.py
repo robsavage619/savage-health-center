@@ -26,6 +26,7 @@ _WANTED: dict[str, tuple[str, str | None]] = {
     "HKQuantityTypeIdentifierBloodPressureSystolic": ("bp_systolic", "mmHg"),
     "HKQuantityTypeIdentifierBloodPressureDiastolic": ("bp_diastolic", "mmHg"),
     "HKQuantityTypeIdentifierBodyFatPercentage": ("body_fat_pct", "%"),
+    "HKQuantityTypeIdentifierBodyMassIndex": ("body_mass_index", "kg/m²"),
     "HKQuantityTypeIdentifierVO2Max": ("vo2_max", "mL/kg/min"),
     "HKQuantityTypeIdentifierFlightsClimbed": ("flights_climbed", "count"),
     # Body composition — populated by smart scales via Apple Health

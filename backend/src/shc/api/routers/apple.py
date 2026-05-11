@@ -85,6 +85,7 @@ _SHORTCUT_UNITS: dict[str, tuple[str, str]] = {
     "walking_asymmetry_pct":     ("walking_asymmetry_pct",     "%"),
     "walking_double_support_pct":("walking_double_support_pct","%"),
     # Body composition — unit-neutral
+    "body_mass_index":       ("body_mass_index",       "kg/m²"),
     "body_fat_pct":          ("body_fat_pct",          "%"),
     # Environment / mindfulness — unit-neutral
     "env_audio_dbspl":       ("env_audio_dbspl",       "dBASPL"),
@@ -103,7 +104,6 @@ _SHORTCUT_UNITS: dict[str, tuple[str, str]] = {
 # DB always stores SI (matches XML importer). Display layer converts back to imperial.
 _IMPERIAL_TO_SI: dict[str, tuple[str, str, float]] = {
     # shortcut key → (db metric, db unit, multiplier)
-    "body_mass_lb":          ("body_mass_kg",          "kg",    0.453592),
     "lean_body_mass_lb":     ("lean_body_mass_kg",     "kg",    0.453592),
     "distance_walking_mi":   ("distance_walking_km",   "km",    1.60934),
     "walking_speed_mph":     ("walking_speed_m_s",     "m/s",   0.44704),
