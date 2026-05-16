@@ -53,7 +53,7 @@ def get_vault_research(state: dict[str, Any] | None = None) -> str:
 def _workout_logged_today(conn) -> bool:
     """Return True if a strength workout has already been completed today."""
     row = conn.execute(
-        "SELECT COUNT(*) FROM workouts WHERE started_at::DATE = current_date"
+        "SELECT COUNT(*) FROM workouts WHERE started_at::DATE = current_date AND source = 'hevy'"
     ).fetchone()
     return bool(row and row[0] > 0)
 
