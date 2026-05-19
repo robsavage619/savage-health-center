@@ -234,7 +234,7 @@ async def get_muscle_volume() -> dict[str, Any]:
                     m.primary_muscle,
                     COUNT(DISTINCT ws.id) AS work_sets
                 FROM workout_sets_dedup ws
-                JOIN exercise_muscle_map m ON ws.exercise_name = m.exercise_name
+                JOIN exercise_muscle_map m ON ws.exercise = m.exercise_name
                 WHERE ws.started_at::DATE >= ?
                   AND NOT ws.is_warmup
                   AND ws.weight_kg > 0 AND ws.reps > 0
@@ -248,14 +248,14 @@ async def get_muscle_volume() -> dict[str, Any]:
             # Find exercises in this week that lack a muscle mapping
             unmapped = conn.execute(
                 """
-                SELECT DISTINCT ws.exercise_name
+                SELECT DISTINCT ws.exercise
                 FROM workout_sets_dedup ws
-                LEFT JOIN exercise_muscle_map m ON ws.exercise_name = m.exercise_name
+                LEFT JOIN exercise_muscle_map m ON ws.exercise = m.exercise_name
                 WHERE ws.started_at::DATE >= ?
                   AND NOT ws.is_warmup
                   AND ws.weight_kg > 0 AND ws.reps > 0
                   AND m.exercise_name IS NULL
-                ORDER BY ws.exercise_name
+                ORDER BY ws.exercise
                 """,
                 [week_start.isoformat()],
             ).fetchall()
