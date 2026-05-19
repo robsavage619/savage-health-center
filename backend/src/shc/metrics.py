@@ -546,6 +546,15 @@ def _training_load(conn, today: date) -> TrainingLoadMetrics:
         bal[g] = bal[g] + 1
         if g not in last_by_group or day > last_by_group[g]:
             last_by_group[g] = day
+    # Pickleball counts as a legs stimulus — heavy lateral lower-body demand.
+    pb_last_row = conn.execute(
+        "SELECT MAX(date) FROM cardio_sessions WHERE modality = 'pickleball'"
+    ).fetchone()
+    if pb_last_row and pb_last_row[0]:
+        pb_date = pb_last_row[0] if isinstance(pb_last_row[0], date) else date.fromisoformat(str(pb_last_row[0]))
+        if "legs" not in last_by_group or pb_date > last_by_group["legs"]:
+            last_by_group["legs"] = pb_date
+
     for g in ("push", "pull", "legs"):
         if g in last_by_group:
             setattr(m, f"days_since_{g}", (today - last_by_group[g]).days)
