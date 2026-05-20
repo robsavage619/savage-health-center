@@ -756,6 +756,9 @@ def _readiness_snapshot(
     )
 
 
+DELOAD_COOLDOWN_DAYS = 9
+
+
 def _gates(
     rec: RecoveryMetrics,
     sleep: SleepMetrics,
@@ -763,6 +766,8 @@ def _gates(
     chk: CheckinMetrics,
     readiness: ReadinessSnapshot,
     e1rm_regression_pct: float | None,
+    deload_cooldown: bool = False,
+    e1rm_lift: str | None = None,
 ) -> AutoRegGates:
     g = AutoRegGates()
     reasons: list[str] = []
@@ -885,11 +890,24 @@ def _gates(
                 )
 
     # Deload trigger: persistent regression on a primary lift.
+    # Cooldown guard: the e1RM regression metric is computed from logged loads,
+    # and deload sessions log lighter loads *by design*. Re-triggering a deload
+    # off a metric that the previous deload depressed creates a self-perpetuating
+    # loop. If a deload was already prescribed within the cooldown window, record
+    # the regression but suppress the trigger so the block can re-accumulate.
     if e1rm_regression_pct is not None and e1rm_regression_pct < -3.0:
-        g.deload_required = True
-        g.deload_reason = f"e1RM regression {e1rm_regression_pct:.1f}% on primary lift"
-        reasons.append(g.deload_reason)
         g.e1rm_regression_4wk_pct = e1rm_regression_pct
+        lift = e1rm_lift or "primary lift"
+        if deload_cooldown:
+            reasons.append(
+                f"e1RM regression {e1rm_regression_pct:.1f}% on {lift} noted, but a "
+                f"deload fired within {DELOAD_COOLDOWN_DAYS}d — trigger suppressed to "
+                "allow re-accumulation"
+            )
+        else:
+            g.deload_required = True
+            g.deload_reason = f"e1RM regression {e1rm_regression_pct:.1f}% on {lift}"
+            reasons.append(g.deload_reason)
 
     # Travel — keep it moderate at most.
     if chk.travel_flag and g.max_intensity == "high":
@@ -909,24 +927,62 @@ def _gates(
     return g
 
 
-def _e1rm_regression(conn, today: date) -> float | None:
-    """Detect 4-week regression on Rob's most-frequently-trained primary lift.
+# Free-weight compound patterns that make a meaningful "primary strength lift".
+# e1RM on these tracks real strength; machine/cable/isolation work does not.
+_STRENGTH_PATTERNS = (
+    "bench press", "squat", "deadlift", "overhead press", "military press",
+    "bent over row", "pendlay row", "meadows row", "t bar row", "hip thrust",
+    "good morning", "lunge", "split squat", "chin up", "pull up", "push press",
+)
+# Equipment/markers that disqualify a lift as a strength-tracking primary:
+# machines and cables fix the path (load ≠ effort), "goblet" caps load by grip.
+_NOT_STRENGTH = (
+    "machine", "smith", "cable", "hammerstrength", "iso-lateral", "assisted",
+    "band", "suspension", "pec deck", "goblet",
+)
 
-    Returns negative pct if e1RM is trending down; None if insufficient data.
-    e1RM uses Epley formula: weight × (1 + reps/30).
+
+def _is_strength_lift(name: str) -> bool:
+    """True for free-weight compound lifts whose e1RM tracks real strength."""
+    e = name.lower()
+    if any(bad in e for bad in _NOT_STRENGTH):
+        return False
+    return any(pat in e for pat in _STRENGTH_PATTERNS)
+
+
+def _e1rm_regression(conn, today: date) -> tuple[float, str] | None:
+    """Detect a regression in peak e1RM on a real primary strength lift.
+
+    Returns (pct, lift_name) if peak strength is trending down; None if
+    insufficient data. e1RM uses Epley: weight × (1 + reps/30). Effort-aware:
+
+    - The "primary lift" must be a free-weight compound (machines/cables fix the
+      path so load ≠ effort, and they're what gets deloaded — using them creates
+      a self-referential loop).
+    - Sets logged on deload-prescribed days are excluded (they're light by
+      design and would manufacture a phantom regression).
+    - Only working sets count (RPE ≥ 7, or RPE absent — never light back-offs).
+    - Compares PEAK e1RM recent-half vs prior-half, not averages: a real
+      regression means even your best recent effort fell below your best prior
+      effort, which a few light sessions can't fake.
     """
-    primary = conn.execute(
+    since = (today - timedelta(days=56)).isoformat()
+    candidates = conn.execute(
         """
         SELECT ws.exercise, COUNT(*) AS n
         FROM workout_sets_dedup ws
         WHERE ws.is_warmup = FALSE AND ws.weight_kg IS NOT NULL
           AND day_d >= $s
         GROUP BY ws.exercise
-        ORDER BY n DESC LIMIT 1
+        ORDER BY n DESC
         """,
-        {"s": (today - timedelta(days=56)).isoformat()},
-    ).fetchone()
-    if not primary:
+        {"s": since},
+    ).fetchall()
+    primary_ex = next(
+        (ex for ex, n in candidates if n >= 6 and _is_strength_lift(ex)),
+        None,
+    )
+    if primary_ex is None:
         return None
     rows = conn.execute(
         """
@@ -934,22 +990,45 @@ def _e1rm_regression(conn, today: date) -> float | None:
         FROM workout_sets_dedup ws
         WHERE ws.is_warmup = FALSE AND ws.weight_kg IS NOT NULL
           AND ws.exercise = $ex AND day_d >= $s
+          AND (ws.rpe IS NULL OR ws.rpe >= 7)
+          AND day_d NOT IN (
+              SELECT date FROM workout_plans
+              WHERE json_extract_string(plan_json, '$.deload_prescribed') = 'true'
+          )
         GROUP BY day_d ORDER BY day_d
         """,
-        {"ex": primary[0], "s": (today - timedelta(days=56)).isoformat()},
+        {"ex": primary_ex, "s": since},
     ).fetchall()
     if len(rows) < 4:
         return None
     half = len(rows) // 2
     prior = [float(r[1]) for r in rows[:half] if r[1]]
     recent = [float(r[1]) for r in rows[half:] if r[1]]
-    if not prior or not recent:
+    if len(prior) < 2 or len(recent) < 2:
         return None
-    p_avg = sum(prior) / len(prior)
-    r_avg = sum(recent) / len(recent)
-    if p_avg <= 0:
+    p_peak = max(prior)
+    r_peak = max(recent)
+    if p_peak <= 0:
         return None
-    return round((r_avg - p_avg) / p_avg * 100.0, 2)
+    return round((r_peak - p_peak) / p_peak * 100.0, 2), primary_ex
+
+
+def _deload_in_cooldown(conn, today: date, window: int = DELOAD_COOLDOWN_DAYS) -> bool:
+    """True if a deload was already prescribed within the cooldown window.
+
+    Looks at prescribed plans (not logged sets) so the signal is the *intent* to
+    deload, independent of what was actually performed. Used to suppress the
+    e1RM-regression deload trigger and break the self-perpetuating deload loop.
+    """
+    row = conn.execute(
+        """
+        SELECT COUNT(*) FROM workout_plans
+        WHERE date >= $s AND date < $today
+          AND json_extract_string(plan_json, '$.deload_prescribed') = 'true'
+        """,
+        {"s": (today - timedelta(days=window)).isoformat(), "today": today.isoformat()},
+    ).fetchone()
+    return bool(row and row[0])
 
 
 def _freshness(conn, today: date, rec: RecoveryMetrics, sleep: SleepMetrics, load: TrainingLoadMetrics) -> DataFreshness:
@@ -1000,8 +1079,12 @@ def compute_daily_state(conn, planning_date: date | None = None) -> dict[str, An
     beta_blocker = _is_beta_blocker(meds) and bool(chk.propranolol_taken)
 
     readiness = _readiness_snapshot(rec, sleep, chk, beta_blocker=beta_blocker)
-    e1rm_pct = _e1rm_regression(conn, today)
-    gates = _gates(rec, sleep, load, chk, readiness, e1rm_pct)
+    e1rm = _e1rm_regression(conn, today)
+    e1rm_pct, e1rm_lift = e1rm if e1rm else (None, None)
+    deload_cooldown = _deload_in_cooldown(conn, today)
+    gates = _gates(
+        rec, sleep, load, chk, readiness, e1rm_pct, deload_cooldown, e1rm_lift
+    )
     freshness = _freshness(conn, today, rec, sleep, load)
 
     state = DailyState(

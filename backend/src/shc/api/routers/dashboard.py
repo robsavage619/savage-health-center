@@ -2617,17 +2617,28 @@ async def submit_workout_plan(body: WorkoutPlanSubmission) -> dict:
             real_today = date.today()
             plan_date = (real_today + timedelta(days=1)) if _workout_logged_today(conn) else real_today
         state = compute_daily_state(conn, planning_date=plan_date if plan_date != date.today() else None)
+        from shc.ai.workout_planner import e1rm_by_exercise
+        e1rm_ceilings = e1rm_by_exercise(conn, plan_date)
     finally:
         conn.close()
     try:
-        validate_plan(body.plan, state=state)
+        validate_plan(body.plan, state=state, e1rm_ceilings=e1rm_ceilings)
     except GateViolation as exc:
         raise HTTPException(status_code=409, detail=f"Auto-regulation gate: {exc}") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     plan_date_iso = plan_date.isoformat()
-    plan_with_meta = {"generated_at": plan_date_iso, "source": body.source, **body.plan}
+    # Persist whether a deload genuinely fired today (gate, not narrative text).
+    # This is the structured signal the deload-cooldown reads — anchoring the
+    # cooldown window to actual fires, not stray mentions of "deload" in copy.
+    deload_prescribed = bool(state.get("gates", {}).get("deload_required"))
+    plan_with_meta = {
+        "generated_at": plan_date_iso,
+        "source": body.source,
+        "deload_prescribed": deload_prescribed,
+        **body.plan,
+    }
 
     await save_plan(plan_with_meta, source=body.source, target_date=plan_date)
     _WORKOUT_CACHE[plan_date_iso] = plan_with_meta

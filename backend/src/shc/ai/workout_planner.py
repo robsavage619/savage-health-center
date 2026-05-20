@@ -16,6 +16,7 @@ directly; it only:
 
 import json
 import logging
+import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -103,6 +104,11 @@ def build_training_context(conn, planning_date: date | None = None) -> tuple[str
     ww_rows = conn.execute(
         "SELECT exercise, weight_kg, source FROM working_weights ORDER BY updated_at DESC"
     ).fetchall()
+    # Best Epley e1RM per exercise (90d) — the basis for today's target load.
+    # working_weights is an all-time ratcheting MAX, so prescribing off it at
+    # higher reps demands a SUPRAMAXIMAL e1RM (a fake "deload"). Target load must
+    # be derived from e1RM × today's intensity cap, not from the raw max weight.
+    e1rm_by_ex = e1rm_by_exercise(conn, today)
     top_exercises = conn.execute(
         """
         SELECT ws.exercise, COUNT(*) AS sets, MAX(ws.weight_kg) AS max_kg,
@@ -186,6 +192,25 @@ def build_training_context(conn, planning_date: date | None = None) -> tuple[str
         lines.append(f"  · {r}")
     if not gates["reasons"]:
         lines.append("  · all clear — no overrides")
+
+    # ── Load prescription rule — prevents the "deload = max attempt" bug ──
+    cap_pct = load_cap_pct(gates)
+    lines.append("\n## ⚠ LOAD PRESCRIPTION RULE (HARD CONSTRAINT)")
+    lines.append(
+        f"- Today's intensity ceiling is **{cap_pct}% of e1RM**. For every "
+        "loaded exercise, the prescribed weight × reps must satisfy "
+        f"`weight × (1 + reps/30) ≤ e1RM × {cap_pct / 100:.2f}`."
+    )
+    lines.append(
+        "- NEVER prescribe a weight/rep combo whose Epley e1RM exceeds that "
+        "ceiling. Holding the all-time working weight and just adding reps is a "
+        "MAX ATTEMPT, not a deload — drop the weight instead."
+    )
+    lines.append(
+        "- The WORKING WEIGHTS list below shows each lift's e1RM and today's "
+        "load ceiling at 8 reps. Use the ceiling as your upper bound; pick reps "
+        "to land at the prescribed RPE."
+    )
 
     lines.append("\n## READINESS SNAPSHOT")
     if readiness["score"] is not None:
@@ -301,10 +326,20 @@ def build_training_context(conn, planning_date: date | None = None) -> tuple[str
         )
 
     ww_limit = 40
-    lines.append(f"\n## WORKING WEIGHTS ({len(ww_rows)} exercises on record)")
+    lines.append(
+        f"\n## WORKING WEIGHTS ({len(ww_rows)} exercises on record) — "
+        f"all-time max · e1RM · today's ceiling ({cap_pct}% @8 reps)"
+    )
     for ex, wkg, src in ww_rows[:ww_limit]:
         lbs = round(wkg * 2.20462, 1) if wkg else 0
-        lines.append(f"- {ex}: {lbs} lbs ({wkg:.1f} kg) [{src}]")
+        e1rm_kg = e1rm_by_ex.get(ex)
+        if e1rm_kg:
+            e1rm_lbs = round(e1rm_kg * 2.20462, 1)
+            ceiling_lbs = round(e1rm_kg * (cap_pct / 100) / (1 + 8 / 30) * 2.20462, 1)
+            extra = f" · e1RM ~{e1rm_lbs} · today ≤{ceiling_lbs} lbs @8"
+        else:
+            extra = " · e1RM n/a — set load by feel to RPE on first set"
+        lines.append(f"- {ex}: {lbs} lbs ({wkg:.1f} kg) [{src}]{extra}")
     if len(ww_rows) > ww_limit:
         lines.append(
             f"  ... {len(ww_rows) - ww_limit} more truncated "
@@ -466,11 +501,56 @@ class GateViolation(ValueError):
     """Raised when a plan violates a hard auto-regulation gate."""
 
 
+def load_cap_pct(gates: dict[str, Any]) -> int:
+    """Today's load ceiling as a percentage of e1RM, from the gates.
+
+    The ceiling stops recovery/deload days from prescribing supramaximal loads.
+    A genuine HIGH day must sit ABOVE 100% — e1RM is an estimate, and beating it
+    is exactly how progressive overload registers a new peak. Capping high days
+    at <100% would freeze the strength ceiling and create a different "stuck"
+    loop. The 3% tolerance in the validator stacks on top of these.
+    """
+    if gates.get("deload_required"):
+        return 70
+    return {"low": 78, "moderate": 90}.get(gates.get("max_intensity", "high"), 103)
+
+
+def e1rm_by_exercise(conn, today: date, days: int = 90) -> dict[str, float]:
+    """Best Epley e1RM (kg) per exercise over the window. Basis for target load."""
+    rows = conn.execute(
+        """
+        SELECT ws.exercise, MAX(ws.weight_kg * (1 + ws.reps / 30.0)) AS e1rm_kg
+        FROM workout_sets ws
+        JOIN workouts w ON w.id = ws.workout_id
+        WHERE ws.is_warmup = FALSE AND ws.weight_kg IS NOT NULL AND ws.reps > 0
+          AND w.started_at::DATE >= $since
+        GROUP BY ws.exercise
+        """,
+        {"since": (today - timedelta(days=days)).isoformat()},
+    ).fetchall()
+    return {r[0]: float(r[1]) for r in rows if r[1]}
+
+
+def _first_int(value: Any) -> int | None:
+    """Parse the leading integer from a reps field ('10-12', '10 each side')."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        m = re.search(r"\d+", value)
+        if m:
+            return int(m.group())
+    return None
+
+
 def _exercise_targets_group(exercise: str, group: str) -> bool:
     return muscle_group(exercise) == group
 
 
-def validate_plan(plan: dict[str, Any], state: dict[str, Any] | None = None) -> bool:
+def validate_plan(
+    plan: dict[str, Any],
+    state: dict[str, Any] | None = None,
+    e1rm_ceilings: dict[str, float] | None = None,
+) -> bool:
     """Validate a plan dict against the schema AND the deterministic gates.
 
     The schema check verifies shape (intensity enum, blocks present, etc.).
@@ -478,6 +558,10 @@ def validate_plan(plan: dict[str, Any], state: dict[str, Any] | None = None) -> 
     constraints — max intensity, forbidden muscle groups, deload requirement.
     Pass `state` (a `DailyState` dict) to enable gate enforcement; omitting
     it falls back to schema-only validation for backwards compatibility.
+
+    Pass `e1rm_ceilings` (exercise → e1RM kg) to enforce the per-exercise load
+    ceiling — rejects any prescribed weight×reps whose Epley e1RM exceeds today's
+    intensity cap. This is what stops a "deload" from being a max attempt.
 
     Raises:
         ValueError: on schema violation.
@@ -546,6 +630,32 @@ def validate_plan(plan: dict[str, Any], state: dict[str, Any] | None = None) -> 
                     f"Deload required ({gates.get('deload_reason')}) but plan is "
                     f"{rec['intensity']} @ RPE {target_rpe} — must be ≤moderate @ RPE ≤7."
                 )
+
+        # Per-exercise load ceiling: prescribed e1RM demand must not exceed
+        # today's intensity cap. Stops the "hold the max weight, add reps"
+        # pseudo-deload that demands a supramaximal effort.
+        if e1rm_ceilings:
+            cap = load_cap_pct(gates) / 100
+            for block in blocks:
+                for ex in block.get("exercises", []):
+                    name = ex.get("name", "")
+                    e1rm_kg = e1rm_ceilings.get(name)
+                    w_lbs = ex.get("weight_lbs")
+                    reps = _first_int(ex.get("reps"))
+                    if not e1rm_kg or not w_lbs or not reps:
+                        continue
+                    demand_kg = (w_lbs / 2.20462) * (1 + reps / 30)
+                    ceiling_kg = e1rm_kg * cap
+                    # 3% tolerance for rounding/load-increment realities.
+                    if demand_kg > ceiling_kg * 1.03:
+                        demand_e1rm = round(demand_kg * 2.20462, 1)
+                        ceil_e1rm = round(ceiling_kg * 2.20462, 1)
+                        raise GateViolation(
+                            f"{name!r} prescribed {w_lbs}lb×{reps} demands e1RM "
+                            f"{demand_e1rm}lb, over today's {load_cap_pct(gates)}% "
+                            f"ceiling of {ceil_e1rm}lb. Drop the weight — this is a "
+                            "max attempt, not a deload."
+                        )
     return True
 
 
