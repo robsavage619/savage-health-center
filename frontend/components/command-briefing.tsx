@@ -1,18 +1,19 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
 import { api, type Briefing, type DailyState } from "@/lib/api";
+import { reconciledVerdict, type VerdictTone } from "@/lib/readiness";
 import { Eyebrow, Dot } from "@/components/ui/metric";
 
 /**
  * Decision-first command briefing.
  *
- * Replaces the previous 6-slot metric ribbon with a single "Today's Move"
- * card: one verdict, one why, one CTA. The 6 vitals are demoted to a
- * collapsed row that expands on click. Readiness, HRV-σ, ACWR, and the
- * β-blocker reweighting all come from the canonical /api/state/today —
- * no client-side recomputation, no drift versus the LLM's view.
+ * A single "Today's Move" card: one verdict, one why, one CTA. The verdict
+ * reconciles the readiness score with the auto-regulation gates (see
+ * reconciledVerdict) so a high score can't read "Push it" on a deload day.
+ * At-a-glance vitals live in the header HUD; detail lives in the WHOOP panel
+ * and pillars — not duplicated here. Readiness, HRV-σ, ACWR, and the
+ * β-blocker reweighting all come from the canonical /api/state/today.
  */
 
 const CALL_COLOR: Record<string, string> = {
@@ -23,23 +24,7 @@ const CALL_COLOR: Record<string, string> = {
   Rest: "var(--negative)",
 };
 
-function tier(score: number | null | undefined): "positive" | "neutral" | "negative" {
-  if (score == null) return "neutral";
-  if (score >= 67) return "positive";
-  if (score >= 34) return "neutral";
-  return "negative";
-}
-
-function verdict(score: number | null | undefined): string {
-  if (score == null) return "Awaiting data";
-  if (score >= 80) return "Train hard";
-  if (score >= 67) return "Push it";
-  if (score >= 50) return "Moderate";
-  if (score >= 34) return "Active recovery";
-  return "Rest & restore";
-}
-
-function tierColor(t: "positive" | "neutral" | "negative") {
+function tierColor(t: VerdictTone) {
   return t === "positive" ? "var(--positive)" : t === "negative" ? "var(--negative)" : "var(--neutral)";
 }
 
@@ -48,34 +33,7 @@ function scrollToPlan() {
   if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function VitalCell({
-  label,
-  value,
-  unit,
-  sub,
-  tone = "neutral",
-}: {
-  label: string;
-  value: string;
-  unit?: string;
-  sub?: string;
-  tone?: "positive" | "neutral" | "negative";
-}) {
-  return (
-    <div className="px-3 py-2 border-r border-[var(--hairline)] last:border-r-0 min-w-[110px]">
-      <Eyebrow>{label}</Eyebrow>
-      <div className="mt-0.5 flex items-baseline gap-1">
-        <span className="metric-md tabular-nums" style={{ color: tierColor(tone) }}>{value}</span>
-        {unit && <span className="text-[10px] text-[var(--text-dim)]">{unit}</span>}
-      </div>
-      {sub && <p className="mt-px text-[10px] text-[var(--text-muted)] tabular-nums">{sub}</p>}
-    </div>
-  );
-}
-
 export function CommandBriefing() {
-  const [vitalsOpen, setVitalsOpen] = useState(false);
-
   const stateQ = useQuery({
     queryKey: ["daily-state"],
     queryFn: api.dailyState,
@@ -108,9 +66,7 @@ export function CommandBriefing() {
   const fresh = state.freshness;
   const propranolol = state.checkin?.propranolol_taken ?? false;
 
-  const score = r.score;
-  const t = tier(score);
-  const v = verdict(score);
+  const { label: v, tone: t, gated } = reconciledVerdict(state);
   const briefing =
     briefingQ.data && "training_call" in briefingQ.data ? (briefingQ.data as Briefing) : null;
 
@@ -161,6 +117,11 @@ export function CommandBriefing() {
             >
               {v}
             </p>
+            {gated && (
+              <p className="mt-1 text-[10px] uppercase tracking-wider text-[var(--text-dim)]">
+                Capped by gates ↓
+              </p>
+            )}
           </div>
         </div>
 
@@ -206,7 +167,7 @@ export function CommandBriefing() {
         </div>
 
         <button type="button" onClick={scrollToPlan} className="btn btn-secondary shrink-0">
-          Today's plan ↓
+          {"Today's plan ↓"}
         </button>
       </div>
 
@@ -268,70 +229,6 @@ export function CommandBriefing() {
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {/* Vitals — collapsed by default, expands on click */}
-      <button
-        type="button"
-        onClick={() => setVitalsOpen((o) => !o)}
-        className="w-full px-5 py-2 border-t border-[var(--hairline)] flex items-center gap-2 text-left hover:bg-[var(--card-hover)] transition-colors"
-      >
-        <span className="text-[10px] uppercase tracking-wider text-[var(--text-dim)]">Vitals</span>
-        <span className="text-[11px] text-[var(--text-muted)] tabular-nums">
-          {[
-            r.score != null ? `Readiness ${Math.round(r.score)}` : null,
-            rec.score != null ? `Recovery ${Math.round(rec.score)}` : null,
-            rec.hrv_ms != null ? `HRV ${rec.hrv_ms.toFixed(0)}ms` : null,
-            sleep.last_hours != null ? `Sleep ${sleep.last_hours.toFixed(1)}h` : null,
-          ]
-            .filter(Boolean)
-            .join("  ·  ")}
-        </span>
-        <span className="ml-auto text-[10px] text-[var(--text-dim)]">{vitalsOpen ? "▴" : "▾"}</span>
-      </button>
-
-      {vitalsOpen && (
-        <div className="flex flex-wrap border-t border-[var(--hairline)]">
-          <VitalCell
-            label="Readiness"
-            value={r.score != null ? String(Math.round(r.score)) : "—"}
-            tone={tier(r.score)}
-            sub={r.beta_blocker_adjusted ? "β-adj composite" : "composite"}
-          />
-          <VitalCell
-            label="Recovery"
-            value={rec.score != null ? String(Math.round(rec.score)) : "—"}
-            tone={tier(rec.score)}
-            sub={rec.score_date ? new Date(rec.score_date).toLocaleDateString([], { month: "short", day: "numeric" }) : undefined}
-          />
-          <VitalCell
-            label="HRV"
-            value={rec.hrv_ms ? rec.hrv_ms.toFixed(0) : "—"}
-            unit="ms"
-            tone={rec.hrv_sigma == null ? "neutral" : rec.hrv_sigma >= -0.5 ? "positive" : rec.hrv_sigma >= -1.5 ? "neutral" : "negative"}
-            sub={rec.hrv_sigma != null ? `${rec.hrv_sigma >= 0 ? "+" : ""}${rec.hrv_sigma.toFixed(2)}σ` : undefined}
-          />
-          <VitalCell
-            label="RHR"
-            value={rec.rhr ? String(rec.rhr) : "—"}
-            unit="bpm"
-            sub={rec.rhr_elevated_pct != null ? `${rec.rhr_elevated_pct >= 0 ? "+" : ""}${rec.rhr_elevated_pct.toFixed(1)}%` : undefined}
-            tone={rec.rhr_elevated_pct == null ? "neutral" : rec.rhr_elevated_pct > 5 ? "negative" : rec.rhr_elevated_pct < -2 ? "positive" : "neutral"}
-          />
-          <VitalCell
-            label="Sleep"
-            value={sleep.last_hours ? sleep.last_hours.toFixed(1) : "—"}
-            unit="h"
-            sub={sleep.deep_pct_last != null ? `deep ${(sleep.deep_pct_last * 100).toFixed(0)}%` : sleep.avg_7d ? `${sleep.avg_7d.toFixed(1)}h 7d` : undefined}
-            tone={sleep.last_hours == null ? "neutral" : sleep.last_hours >= 7.5 ? "positive" : sleep.last_hours >= 6.5 ? "neutral" : "negative"}
-          />
-          <VitalCell
-            label="ACWR"
-            value={load.acwr != null ? load.acwr.toFixed(2) : "—"}
-            tone={load.acwr == null ? "neutral" : load.acwr > 1.5 ? "negative" : load.acwr > 1.3 ? "neutral" : load.acwr < 0.8 ? "neutral" : "positive"}
-            sub={load.days_since_last != null ? `${load.days_since_last}d since` : undefined}
-          />
         </div>
       )}
 

@@ -18,7 +18,7 @@ function protocolLabel(score: number | null): string {
 
 function Sep() {
   return (
-    <span style={{ margin: "0 18px", color: "oklch(1 0 0 / 0.13)" }}>//</span>
+    <span style={{ margin: "0 18px", color: "oklch(1 0 0 / 0.13)" }}>{"//"}</span>
   );
 }
 
@@ -33,16 +33,15 @@ export function ProtocolStrip() {
 
   return (
     <div
+      className="justify-start md:justify-center overflow-x-auto no-scrollbar px-4 md:px-0"
       style={{
         position: "relative",
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
         height: 30,
         borderTop: "1px solid var(--hairline)",
         borderBottom: "1px solid var(--hairline)",
         background: "oklch(0.11 0.006 250 / 0.55)",
-        overflow: "hidden",
         userSelect: "none",
       }}
     >

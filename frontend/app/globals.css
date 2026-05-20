@@ -532,6 +532,9 @@ body::after {
 }
 ::-webkit-scrollbar-thumb:hover { background: oklch(0.36 0 0); }
 
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
 /* ── Entry animation for cards ──────────── */
 @keyframes shc-fade-up {
   from { opacity: 0; transform: translateY(6px); }

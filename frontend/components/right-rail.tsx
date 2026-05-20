@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api, type MomentumWeek } from "@/lib/api";
+import { reconciledVerdict } from "@/lib/readiness";
 import { Eyebrow } from "@/components/ui/metric";
 import { CheckinCard } from "@/components/checkin-card";
 
@@ -27,6 +28,19 @@ function PulseCard() {
   const tier = s?.readiness.tier;
   const color =
     tier === "green" ? "var(--positive)" : tier === "red" ? "var(--negative)" : tier === "yellow" ? "var(--neutral)" : "var(--text-faint)";
+  const v = s ? reconciledVerdict(s) : null;
+  const pulseLine =
+    v == null || v.rank < 0
+      ? "Awaiting today's signals."
+      : v.label === "Deload"
+        ? "Deload — quality over load."
+        : v.rank >= 3
+          ? "Prime for intensity."
+          : v.rank === 2
+            ? "Moderate — listen to body."
+            : v.rank === 1
+              ? "Active recovery only."
+              : "Recover — easy day only.";
 
   return (
     <div className="shc-card shc-enter p-4 space-y-3">
@@ -50,13 +64,7 @@ function PulseCard() {
           <p className="text-[10.5px] text-[var(--text-dim)] uppercase tracking-wider"
             style={{ fontFamily: "var(--font-orbitron)", letterSpacing: "0.16em" }}>Readiness</p>
           <p className="text-[12px] text-[var(--text-muted)] mt-0.5 leading-snug">
-            {tier === "green"
-              ? "Prime for intensity."
-              : tier === "yellow"
-                ? "Moderate — listen to body."
-                : tier === "red"
-                  ? "Recover — easy day only."
-                  : "Awaiting today's signals."}
+            {pulseLine}
           </p>
         </div>
       </div>

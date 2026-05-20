@@ -22,14 +22,16 @@ import { NextWorkoutCard } from "@/components/next-workout-card";
 import { CardioPanel } from "@/components/cardio-panel";
 import { WhoopVitals } from "@/components/whoop-vitals";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { SectionNav } from "@/components/section-nav";
+import { CollapsibleSection } from "@/components/collapsible-section";
 
 export default function Dashboard() {
   return (
     <main className="min-h-screen px-5 pb-20 pt-6 max-w-[1600px] mx-auto">
       <AmbientHue />
-      <header className="flex items-stretch justify-between pb-5 border-b border-[var(--hairline)] mb-5 gap-4">
+      <header className="flex items-stretch justify-between flex-wrap pb-5 border-b border-[var(--hairline)] mb-5 gap-4">
         <div className="flex flex-col justify-end gap-2 shrink-0">
-          <div className="flex items-baseline gap-3">
+          <div className="flex items-baseline gap-3 flex-wrap">
             <h1 className="flex items-baseline gap-[0.5em]">
               <span className="sl-wordmark-savage">Savage</span>
               <span className="sl-wordmark-labs">Labs</span>
@@ -40,7 +42,9 @@ export default function Dashboard() {
           </div>
           <div className="sl-wordmark-bar" />
         </div>
-        <HeaderHUD />
+        <div className="order-last w-full md:order-none md:w-auto md:flex-1 flex min-w-0">
+          <HeaderHUD />
+        </div>
         <div className="shrink-0 flex items-end">
           <DashboardClock />
         </div>
@@ -48,41 +52,43 @@ export default function Dashboard() {
 
       <ProtocolStrip />
 
+      <SectionNav />
+
       <div className="mb-4">
         <SyncStatus />
       </div>
 
       {/*
-        Layout follows the decision-first hierarchy from the design review:
-        1. Command briefing (one verdict + one why)
-        2. Today's plan — the action surface
-        3. Three body-signal pillars (Recovery, Sleep, Training Load) — Readiness
-           is folded into Recovery via DailyState; no longer rendered as a 4th card
-        4. Strength → Cardio → Trends — drill-down detail
+        Decision-first hierarchy. Today's essentials (verdict, plan, signals)
+        render expanded; history/research/detail collapse by default and are
+        reachable via SectionNav. Anchor ids must stay in sync with the
+        SECTIONS list in section-nav.tsx.
       */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4 min-w-0">
-          <ErrorBoundary label="Command briefing">
-            <CommandBriefing />
-          </ErrorBoundary>
+          <section id="today" className="scroll-mt-20 space-y-4">
+            <ErrorBoundary label="Command briefing">
+              <CommandBriefing />
+            </ErrorBoundary>
 
-          <ErrorBoundary label="WHOOP vitals">
-            <WhoopVitals />
-          </ErrorBoundary>
+            <ErrorBoundary label="WHOOP vitals">
+              <WhoopVitals />
+            </ErrorBoundary>
 
-          <ErrorBoundary label="Health story">
-            <HealthStory />
-          </ErrorBoundary>
+            <ErrorBoundary label="Health story">
+              <HealthStory />
+            </ErrorBoundary>
 
-          <ErrorBoundary label="Health analysis">
-            <HealthAnalysis />
-          </ErrorBoundary>
+            <ErrorBoundary label="Health analysis">
+              <HealthAnalysis />
+            </ErrorBoundary>
+          </section>
 
           <ErrorBoundary label="Next workout">
             <NextWorkoutCard />
           </ErrorBoundary>
 
-          <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <section id="signals" className="scroll-mt-20 grid grid-cols-1 lg:grid-cols-3 gap-4">
             <ErrorBoundary label="Recovery">
               <PillarRecovery />
             </ErrorBoundary>
@@ -94,37 +100,52 @@ export default function Dashboard() {
             </ErrorBoundary>
           </section>
 
-          <ErrorBoundary label="Periodization">
-            <PeriodizationStrip />
-          </ErrorBoundary>
+          <CollapsibleSection id="meso" title="Mesocycle">
+            <ErrorBoundary label="Periodization">
+              <PeriodizationStrip />
+            </ErrorBoundary>
+          </CollapsibleSection>
 
-          <ErrorBoundary label="After action">
-            <AfterActionPanel />
-          </ErrorBoundary>
+          <CollapsibleSection id="after-action" title="After-action">
+            <ErrorBoundary label="After action">
+              <AfterActionPanel />
+            </ErrorBoundary>
+          </CollapsibleSection>
 
-          <ErrorBoundary label="Clinical research">
-            <ClinicalResearchPanel />
-          </ErrorBoundary>
+          <CollapsibleSection id="research" title="Research">
+            <div className="space-y-4">
+              <ErrorBoundary label="Clinical research">
+                <ClinicalResearchPanel />
+              </ErrorBoundary>
+              <ErrorBoundary label="Research lab">
+                <LabPanel />
+              </ErrorBoundary>
+            </div>
+          </CollapsibleSection>
 
-          <ErrorBoundary label="Fueling">
-            <FuelingPanel />
-          </ErrorBoundary>
+          <CollapsibleSection id="fueling" title="Fueling">
+            <ErrorBoundary label="Fueling">
+              <FuelingPanel />
+            </ErrorBoundary>
+          </CollapsibleSection>
 
-          <ErrorBoundary label="Research lab">
-            <LabPanel />
-          </ErrorBoundary>
+          <CollapsibleSection id="training" title="Strength">
+            <ErrorBoundary label="Strength">
+              <StrengthPanel />
+            </ErrorBoundary>
+          </CollapsibleSection>
 
-          <ErrorBoundary label="Strength">
-            <StrengthPanel />
-          </ErrorBoundary>
+          <CollapsibleSection id="cardio" title="Cardio & sports">
+            <ErrorBoundary label="Cardio">
+              <CardioPanel />
+            </ErrorBoundary>
+          </CollapsibleSection>
 
-          <ErrorBoundary label="Cardio">
-            <CardioPanel />
-          </ErrorBoundary>
-
-          <ErrorBoundary label="Trends">
-            <TrendIntelligence />
-          </ErrorBoundary>
+          <CollapsibleSection id="trends" title="Trend intelligence">
+            <ErrorBoundary label="Trends">
+              <TrendIntelligence />
+            </ErrorBoundary>
+          </CollapsibleSection>
         </div>
 
         {/* Single RightRail mount — responsive class controls placement */}
