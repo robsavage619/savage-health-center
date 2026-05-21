@@ -4,6 +4,92 @@ All notable changes to this project. Dates are commit dates (Pacific time).
 
 ---
 
+## 2026-05-20
+
+### Added
+
+- **DUPR unofficial API integration** — `sync_rating()` authenticates against `api.dupr.gg` (unofficial mobile/web backend) using email + password stored in macOS Keychain. Fetches `result.stats.doubles` and upserts one snapshot per calendar day into `dupr_snapshots`. Token cached in Keychain; 401/403 triggers automatic re-login. Migration `0026` adds `dupr_snapshots` and `oauth_state` tables.
+
+- **DUPR match history pipeline** — `sync_matches()` paginates `POST /match/v1.0/history/` (limit=25, offset=0 required — API quirk). Extracts pre/post/delta ratings from the team's `preMatchRatingAndImpact` object, per-game scores (G1/G2/G3), partner name, and opponents. Upserted into `dupr_matches` (migration `0027`). New endpoints: `POST /api/pickleball/dupr/sync-matches`, `GET /api/pickleball/matches` (joins `dupr_matches` with `recovery` for WHOOP context on tournament days).
+
+- **2026 Goal Scorecard section** — New `GoalScorecard` component tracking three north-star metrics: DUPR doubles trajectory toward 5.0 (with glowing number, gradient progress bar, embedded latest-tournament context card), key compound e1RM hold-or-climb (per-lift trend with color-coded left borders), and bodyweight concurrent-training target with 4-week trend.
+
+- **Pickleball panel tournament section** — Match history grouped by event date. Per-tournament header shows event name, venue, W/L record, DUPR arc (pre→post), and WHOOP recovery % + HRV for the tournament day. Per-game rows: G-label, WIN/LOSS badge, score, opponents, partner first name, DUPR delta (falls back to `→ post_rating` when delta is null).
+
+- **DUPR wordmark** — Official navy PNG fetched from DUPR's CDN, inverted white via CSS filter, placed in the goal scorecard DUPR block header and inline in the pickleball panel tournament section eyebrow.
+
+- **Test suite** — 117 backend tests added across four new files: `compute_daily_state` end-to-end integration, readiness composite + subscores + e1RM helper, deload / e1RM auto-regulation logic, training-load (ACWR), muscle-group recency, sleep builder, and `workout_sets_dedup` source priority.
+
+- **CI: local pre-push gate** — GitHub Actions CI dropped in favour of a local `pre-push` hook (ruff + pyright + pytest). Keeps the feedback loop fast without needing remote CI on a personal tool.
+
+### Fixed
+
+- **Self-perpetuating deload loop** — Deload flag was derived from the current deload week itself, causing it to always be set once triggered. Fixed by only evaluating the e1RM regression window, not the in-flight deload state.
+
+- **`workout_sets_dedup` column name** — Column is `exercise`, not `exercise_name`; `/training/progression/all` endpoint was referencing the wrong column name.
+
+- **`/training/progression` route shadowing** — `dashboard.py` registered a `GET /training/progression` requiring an `exercise` query param, shadowing `training.py`'s all-exercises version. Resolved by adding `/training/progression/all` as a distinct path.
+
+- **`recovery` table `strain` column** — `GET /pickleball/matches` JOIN referenced a `strain` column that was never in the `recovery` schema; removed.
+
+---
+
+## 2026-05-19
+
+### Added
+
+- **Plain-language clinical signal meanings** — Clinical Research Signals tiles now include an English-phrase interpretation below each computed value (e.g. "SRI 87 — tight circadian rhythm"). Range scales visualise where today's value sits within the clinical spectrum.
+
+- **Section nav + progressive disclosure** — Fixed top nav strip with section anchors (Today, Plan, Signals, Goals, Training, Cardio, Research, Trends). Collapsible sections default to the appropriate open/closed state on first load. Gate-reconciled readiness verdict consolidates all active gate reasons into one plain-English summary card.
+
+---
+
+## 2026-05-18
+
+### Added
+
+- **PMC (Performance Management Chart)** — CTL, ATL, and TSB plotted on a shared axis over a 180-day window. TSB zone bands drawn directly on the chart (Race-Ready, Productive, Fatigued, Overreaching). Replaces the sparkline-only Banister strip.
+
+- **HRV 7-day rolling band** — 7-day EWMA overlaid on the 90-day HRV chart with ±0.5σ guidance band. Visually separates short-term trend from long-term baseline noise.
+
+- **Propranolol β-ADJ badge** — When the morning check-in flags propranolol taken, a `β-ADJ` chip appears on the HRV tile. Signals that the σ-deviation is calculated on the drug-adjusted baseline.
+
+- **Muscle volume panel** — Per-muscle-group set counts for the current mesocycle week vs MEV/MAV/MRV targets. Bars colour-code to target zone (under/in/over). Reads live from `muscle_volume_targets`.
+
+- **Pickleball panel (initial)** — Sport tab in Trend Intelligence: session-count, court-time, and play-freshness KPIs; Play Freshness bar chart (recovery score on court days); Post-play HRV Delta chart (next-morning vs day-of).
+
+### Fixed
+
+- **`workout_sets_dedup` column reference** — Muscle-volume SQL used `ws.exercise_name`; the view's column is `ws.exercise`. Fixed.
+
+- **Pickleball sessions counted as legs stimulus** — Rest-day tracker was not counting pickleball workouts when checking 48h/72h muscle group rest; now treated as lower-body stimulus.
+
+---
+
+## 2026-05-16
+
+### Added
+
+- **WHOOP re-auth button** — When `oauth_state.needs_reauth` is true for WHOOP, the Biometric HUD strip shows a one-click re-authorization button instead of a stale sync warning.
+
+- **Exercise notes + time-based durations** — Hevy workout display now surfaces per-exercise notes (coaching cues synced from the app). Time-based exercises show duration instead of reps×weight.
+
+### Fixed
+
+- **SVG modality icons** — All emoji-based sport/modality icons replaced with inline SVG. No more font-glyph fallbacks on systems without the full emoji set.
+
+- **Planner session-logged-today check** — Was counting any Hevy workout type as "already trained today"; now only counts strength sessions, so a standalone pickleball day doesn't block plan generation.
+
+---
+
+## 2026-05-15
+
+### Added
+
+- **Exercise notes from Hevy** — `GET /api/hevy/workouts` now surfaces per-exercise notes alongside sets. Notes appear as coaching-cue callouts in the After-Action panel.
+
+---
+
 ## 2026-05-12
 
 ### Added

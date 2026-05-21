@@ -72,6 +72,7 @@ It'd be easy to build a dashboard that shows you your WHOOP score and calls it d
 ┌─────────────────────────────────────────────────────────────────┐
 │                         DATA SOURCES                            │
 │  WHOOP OAuth  │  Apple Health XML  │  Hevy API  │  Check-in    │
+│                      DUPR api.dupr.gg                           │
 └───────┬───────┴────────┬───────────┴──────┬─────┴──────┬───────┘
         │                │                  │            │
         ▼                ▼                  ▼            ▼
@@ -89,6 +90,7 @@ It'd be easy to build a dashboard that shows you your WHOOP score and calls it d
 │  conditions    │  labs      │  daily_cycle    │  workout_plans  │
 │  mesocycles    │  muscle_volume_targets       │  lab_questions  │
 │  lab_findings  │  workout_retrospectives      │  working_weights│
+│  dupr_snapshots│  dupr_matches                │  oauth_state    │
 │                                                                 │
 │  Views: v_hrv_baseline_28d, v_session_load, v_daily_load        │
 └───────────────────────────────┬─────────────────────────────────┘
@@ -324,6 +326,7 @@ Four sources, one database. Every record gets a content hash so syncs are always
 | **WHOOP** | OAuth 2.0, syncs every 60 min | Recovery, HRV, RHR, sleep stages (cycles, efficiency, disturbances, respiratory rate), strain, SpO2, skin temp, HR zone durations, body measurements (measured max HR), user profile |
 | **Apple Health** | iCloud HealthAutoExport → CCDA XML parse | Everything — steps, HR, weight, glucose, blood pressure, sleep |
 | **Hevy** | REST API | Every lift, every set, every rep, back to 2015 |
+| **DUPR** | Unofficial `api.dupr.gg` backend (email/password, Keychain-stored) | Doubles + singles rating snapshots daily; full match history (scores, partners, opponents, pre/post/delta per match) |
 | **Morning check-in** | Dashboard form I fill out daily | Energy, stress, soreness, body weight, medication flags |
 
 ```python
@@ -746,28 +749,39 @@ The page background hue shifts with readiness — greenish when I'm good, reddis
 </tr>
 </table>
 
+### 2026 Goal Scorecard
+
+Three north-star metrics tracked on a dedicated section between Signals and Training:
+
+| Track | What it shows |
+|---|---|
+| **DUPR doubles** | Current rating (glowing 32px Orbitron), gap to 5.0 target, gradient progress bar, DUPR sparkline with target reference line, latest tournament context card (W/L · DUPR arc · WHOOP recovery) |
+| **Key compound e1RM** | Top-5 key lifts (squat, bench, deadlift, press, row, pull) with latest e1RM in lbs and 8-week trend (↑ climbing / → holding / ↓ declining), color-coded left border per trend |
+| **Body weight** | Current weight in lbs, 4-week trend in lbs/wk, plain-language concurrent-training interpretation (stable / gaining / losing) |
+
 ### The Sports-Science Strip
 
 Six newer panels stack between the daily-readiness row and the legacy Strength / Cardio panels:
 
 | Panel | What it shows |
 |---|---|
-| **Periodization** | Mesocycle phase strip (W-of-N, deload-week amber) + CTL/ATL/TSB sparkline with form label |
+| **Periodization** | Mesocycle phase strip (W-of-N, deload-week amber) + PMC chart (CTL/ATL/TSB over 180d with zone bands) |
 | **After-Action** | Per-exercise Hevy-driven autoreg: actuals vs plan, next-session weight suggestion, verdict tint |
-| **Clinical Research Signals** | Six peer-reviewed tiles — SRI, lnRMSSD, red-streak, allostatic load, drug-adjusted HRV, Z2 drift |
+| **Clinical Research Signals** | Six peer-reviewed tiles — SRI, lnRMSSD, red-streak, allostatic load, drug-adjusted HRV, Z2 drift — with plain-language meaning and range scale |
 | **Fueling** | Body comp strip (weight / BF% / lean mass) + macros (kcal in/out/balance, protein g/kg, hydration) + 14d energy-balance bar chart |
 | **Research Lab** | Six active pre-registered hypothesis cards (CONFIRMED / REFUTED / INCONCLUSIVE / INSUFFICIENT) + automatic rotation from an 8-question queued bank; verdicts injected into every AI call |
 
 ### Trend Intelligence
 
-Five tabs I open when I want to dig into something:
+Six tabs I open when I want to dig into something:
 
 | Tab | What's in it |
 |---|---|
-| **Recovery** | 90-day HRV, recovery score, RHR with 28d moving average |
+| **Recovery** | 90-day HRV with 7d EWMA + ±0.5σ guidance band, recovery score, RHR with 28d moving average, pre-illness alarm strip |
 | **Body** | Weight trend, 4-week regression line, Apple Health sync |
 | **Patterns** | Sleep vs recovery and HRV vs readiness scatter plots — Pearson-r per plot |
 | **Insights** | Computed correlation cards, unlocks after 7 days of data |
+| **Sport** | Pickleball KPIs (sessions, court time, play freshness); Play Freshness bar chart (WHOOP recovery on court days); Post-play HRV delta chart; Tournament results — match history grouped by event with per-game WIN/LOSS rows, scores, DUPR arc, and WHOOP recovery/HRV for tournament days |
 | **Clinical** | Timeline of medications, diagnoses, and labs — abnormal values flagged |
 
 ### Today's Workout
@@ -840,6 +854,7 @@ Plan comes back as JSON, gets validated against gates, cached for 24h. `?regen=t
 | **WHOOP 4.0** | OAuth 2.0, syncs every 60 min | Recovery, HRV, RHR, sleep stages (with cycles, efficiency, disturbances, respiratory rate), strain, SpO2, skin temp, HR zone durations, body measurements (max HR), user profile |
 | **Apple Health** | HealthAutoExport → CCDA XML | Steps, HR, weight, glucose, blood pressure, sleep |
 | **Hevy** | REST API + routine export | Every lift back to 2015 |
+| **DUPR** | Unofficial `api.dupr.gg` (Keychain credentials, daily cron) | Doubles + singles rating snapshots; full match history with per-game scores, partners, opponents, and pre/post/delta ratings |
 | **Morning check-in** | Dashboard form | Energy, stress, soreness, weight, medication flags |
 | **Cardio log** | Dashboard form | Manual sessions — sport, duration, HR, RPE |
 | **Clinical data** | Dashboard forms | Medications, diagnoses, labs |
@@ -860,7 +875,7 @@ Plan comes back as JSON, gets validated against gates, cached for 24h. `?regen=t
 |---|---|
 | Language | Python 3.12 |
 | Framework | FastAPI 0.115 |
-| Database | DuckDB 1.1 (encrypted, 23 migrations) |
+| Database | DuckDB 1.1 (encrypted, 27 migrations) |
 | Background | APScheduler 3.10 |
 | HTTP | httpx 0.28 (async) |
 | XML | lxml 5 (Apple Health CCDA) |
@@ -939,7 +954,7 @@ I spent more time on the UI than I probably should have. The whole thing uses OK
 ## Data Model
 
 <details>
-<summary>Schema — 21 tables, 4 views (23 migrations applied)</summary>
+<summary>Schema — 24 tables, 4 views (27 migrations applied)</summary>
 
 ```sql
 measurements        -- Apple Health time-series (metric, ts, value, unit, content_hash)
@@ -970,7 +985,10 @@ muscle_volume_targets   -- MEV / MAV / MRV per muscle group, per mesocycle
 lab_questions       -- Pre-registered hypothesis catalogue (id, hypothesis, test_type, threshold, vault_ref,
                     --   retired_at, queued_order — rotation system)
 lab_findings        -- Per-run results (verdict, n, effect_size, p_value, evidence)
-schema_version      -- 23 migrations applied
+dupr_snapshots      -- One DUPR doubles/singles rating snapshot per calendar day (synced from api.dupr.gg)
+dupr_matches        -- Full DUPR match history (match_id PK, game scores, partner/opponents, pre/post/delta rating)
+oauth_state         -- OAuth + credential sync state per source (last_sync_at, needs_reauth)
+schema_version      -- 27 migrations applied
 ```
 
 ```sql
