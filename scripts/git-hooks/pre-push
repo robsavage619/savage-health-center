@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Pre-push test gate — runs the backend suite locally before every push.
+# No CI / no GitHub Actions / no runner cost. Install with:
+#   cp scripts/git-hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root/backend"
+
+echo "▶ pre-push: running backend tests (uv run pytest)…"
+if ! uv run pytest -q; then
+  echo "✗ tests failed — push aborted. Fix tests or push with --no-verify to override."
+  exit 1
+fi
+echo "✓ tests passed — pushing."
