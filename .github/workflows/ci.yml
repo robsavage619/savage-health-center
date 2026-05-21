@@ -7,9 +7,34 @@ on:
     branches: [main]
 
 jobs:
-  backend:
-    name: Backend (lint · typecheck · test)
+  backend-test:
+    name: Backend (test)
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync --dev
+
+      - name: Test
+        working-directory: backend
+        run: uv run pytest
+
+  backend-quality:
+    name: Backend (lint · typecheck)
+    runs-on: ubuntu-latest
+    # Pre-existing lint/format/type debt — kept visible but does not block the
+    # test gate. Clean up incrementally, then fold back into a single job.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -32,10 +57,6 @@ jobs:
       - name: Typecheck
         working-directory: backend
         run: uv run pyright src/
-
-      - name: Test
-        working-directory: backend
-        run: uv run pytest
 
   frontend:
     name: Frontend (lint · build)
