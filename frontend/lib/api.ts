@@ -831,4 +831,26 @@ export const api = {
       total_sessions: number;
       total_duration_min: number;
     }>(`/api/pickleball/trend?days=${days}`),
+  pickleballDupr: () =>
+    get<{
+      as_of: string;
+      snapshots: { date: string; doubles: number | null; singles: number | null; doubles_provisional: boolean | null }[];
+      current: { date: string; doubles: number | null; singles: number | null; doubles_provisional: boolean | null } | null;
+      baseline_doubles: number | null;
+      target_doubles: number;
+      last_sync_at: string | null;
+      needs_reauth: boolean;
+    }>("/api/pickleball/dupr"),
+  trainingProgressionAll: (weeks = 8) =>
+    get<{
+      exercises: {
+        exercise: string;
+        e1rm_lbs: number | null;
+        work_sets: number;
+        perf_score: number | null;
+        trend: string | null;
+        recommendation: string;
+      }[];
+      as_of: string;
+    }>(`/api/training/progression/all?weeks=${weeks}`),
 };

@@ -6,6 +6,7 @@ const SECTIONS = [
   { id: "today", label: "Today" },
   { id: "next-workout", label: "Plan" },
   { id: "signals", label: "Signals" },
+  { id: "goals", label: "Goals" },
   { id: "training", label: "Training" },
   { id: "cardio", label: "Cardio" },
   { id: "research", label: "Research" },

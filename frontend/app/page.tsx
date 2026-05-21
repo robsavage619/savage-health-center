@@ -24,6 +24,7 @@ import { WhoopVitals } from "@/components/whoop-vitals";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { SectionNav } from "@/components/section-nav";
 import { CollapsibleSection } from "@/components/collapsible-section";
+import { GoalScorecard } from "@/components/goal-scorecard";
 
 export default function Dashboard() {
   return (
@@ -99,6 +100,12 @@ export default function Dashboard() {
               <PillarTrainingLoad />
             </ErrorBoundary>
           </section>
+
+          <CollapsibleSection id="goals" title="2026 Goal scorecard">
+            <ErrorBoundary label="Goal scorecard">
+              <GoalScorecard />
+            </ErrorBoundary>
+          </CollapsibleSection>
 
           <CollapsibleSection id="meso" title="Mesocycle">
             <ErrorBoundary label="Periodization">

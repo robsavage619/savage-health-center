@@ -125,6 +125,62 @@ async def get_load_curve(days: int = 90) -> dict[str, Any]:
         conn.close()
 
 
+@router.get("/training/progression/all")
+async def get_progression_all(weeks: int = 8) -> dict[str, Any]:
+    """All-exercises e1RM + trend scores — used by goal scorecard.
+
+    Same logic as get_progression but at a distinct path to avoid shadowing
+    the dashboard.py per-exercise progression route.
+    """
+    conn = get_read_conn()
+    try:
+        cutoff = date.today() - timedelta(weeks=weeks)
+        exercises = [
+            r[0]
+            for r in conn.execute(
+                """
+                SELECT DISTINCT exercise
+                FROM workout_sets_dedup
+                WHERE started_at::DATE >= ?
+                  AND weight_kg > 0 AND reps > 0
+                ORDER BY exercise
+                """,
+                [cutoff],
+            ).fetchall()
+        ]
+        results: list[dict[str, Any]] = []
+        for ex in exercises:
+            ps = score_exercise(conn, ex)
+            if ps is None:
+                history = weekly_e1rm(conn, ex, n_weeks=weeks)
+                if history:
+                    latest = history[-1]
+                    results.append(
+                        {
+                            "exercise": ex,
+                            "e1rm_lbs": round(latest.e1rm_kg * 2.20462),
+                            "work_sets": latest.work_sets,
+                            "perf_score": None,
+                            "trend": None,
+                            "recommendation": "insufficient history",
+                        }
+                    )
+            else:
+                results.append(
+                    {
+                        "exercise": ps.exercise,
+                        "e1rm_lbs": round(ps.e1rm_lbs),
+                        "work_sets": ps.work_sets,
+                        "perf_score": ps.perf_score,
+                        "trend": ps.trend,
+                        "recommendation": ps.recommendation,
+                    }
+                )
+        return {"exercises": results, "as_of": date.today().isoformat()}
+    finally:
+        conn.close()
+
+
 @router.get("/training/progression")
 async def get_progression(weeks: int = 4) -> dict[str, Any]:
     conn = get_read_conn()
