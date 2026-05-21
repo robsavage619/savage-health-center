@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Model from "react-body-highlighter";
-import type { IMuscleStats } from "react-body-highlighter";
+import type { IExerciseData, IMuscleStats, Muscle } from "react-body-highlighter";
 
 export type Soreness = Record<string, number>;
 
@@ -14,7 +14,7 @@ const SEV_COLORS = [
 const SEV_LABEL = ["", "mild", "moderate", "acute"];
 
 // Maps backend muscle keys → react-body-highlighter Muscle strings.
-const TO_LIB: Record<string, string[]> = {
+const TO_LIB: Record<string, Muscle[]> = {
   chest:       ["chest"],
   biceps:      ["biceps"],
   triceps:     ["triceps"],
@@ -58,7 +58,7 @@ const FROM_LIB: Record<string, string> = {
 
 function buildData(soreness: Soreness) {
   // Group backend keys by severity (1=mild, 2=moderate, 3=acute).
-  const groups: string[][] = [[], [], []];
+  const groups: Muscle[][] = [[], [], []];
   for (const [key, sev] of Object.entries(soreness)) {
     if (sev < 1 || sev > 3) continue;
     const libMuscles = TO_LIB[key];
@@ -72,7 +72,7 @@ function buildData(soreness: Soreness) {
     .map((muscles, i) =>
       muscles.length ? { name: `sev${i + 1}`, muscles, frequency: i + 1 } : null,
     )
-    .filter(Boolean) as { name: string; muscles: string[]; frequency: number }[];
+    .filter(Boolean) as IExerciseData[];
 }
 
 export function BodyDiagram({
